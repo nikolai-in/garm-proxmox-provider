@@ -1,0 +1,55 @@
+---
+header: |
+  # Changelog
+types:
+- type: feat
+  section: ✨ Features
+  hidden: false
+- type: fix
+  section: 🐛 Fixes
+  hidden: false
+- type: build
+  section: 🏗️ Build
+  hidden: true
+- type: chore
+  section: 🔧 Chore
+  hidden: true
+- type: ci
+  section: 🤖 CI/CD
+  hidden: true
+- type: docs
+  section: 📚 Documentation
+  hidden: true
+- type: style
+  section: 🎨 Style
+  hidden: true
+- type: refactor
+  section: ♻️ Refactor
+  hidden: true
+- type: perf
+  section: ⚡ Performance
+  hidden: true
+- type: test
+  section: 🧪 Tests
+  hidden: true
+preMajor: false
+commitUrlFormat: '{{@root.host}}/{{@root.owner}}/{{@root.repository}}/commit/{{hash}}'
+compareUrlFormat: '{{@root.host}}/{{@root.owner}}/{{@root.repository}}/compare/{{previousTag}}...{{currentTag}}'
+issueUrlFormat: '{{@root.host}}/{{@root.owner}}/{{@root.repository}}/issues/{{issue}}'
+userUrlFormat: '{{host}}/{{user}}'
+releaseCommitMessageFormat: 'chore(release): {{currentTag}}'
+issuePrefixes:
+- '#'
+host: null
+owner: null
+repository: null
+template: null
+commitTemplate: null
+scopeRegex: '[[:alnum:]]+(?:[-_/][[:alnum:]]+)*'
+lineLength: 80
+wrapDisabled: false
+linkCompare: true
+linkReferences: true
+merges: false
+firstParent: false
+stripRegex: ''
