@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from garm-proxmox-provider!")
+from .cli import main
+
+__all__ = ["main"]
