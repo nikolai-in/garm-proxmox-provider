@@ -10,7 +10,7 @@ import sys
 from typing import Any
 
 from .client import PVEClient
-from .cloud_init import render_userdata
+from .cloud_init import render_lxc_env_vars, render_userdata
 from .config import ConfigError, load_config
 from .models import BootstrapInstance, Instance, InstanceStatus
 
@@ -78,11 +78,19 @@ def cmd_create_instance() -> None:
     bootstrap = BootstrapInstance.from_dict(data)
     overrides = _apply_extra_specs(bootstrap, cfg)
 
-    userdata = render_userdata(
-        bootstrap=bootstrap,
-        provider_id="PLACEHOLDER",  # real VMID not known yet
-        defaults=cfg.defaults,
-    )
+    if cfg.defaults.instance_type == "lxc":
+        lxc_env_vars: dict[str, Any] | None = render_lxc_env_vars(
+            bootstrap=bootstrap,
+            provider_id="PLACEHOLDER",
+        )
+        userdata = ""
+    else:
+        lxc_env_vars = None
+        userdata = render_userdata(
+            bootstrap=bootstrap,
+            provider_id="PLACEHOLDER",  # real VMID not known yet
+            defaults=cfg.defaults,
+        )
 
     client = PVEClient(cfg)
     try:
@@ -97,9 +105,10 @@ def cmd_create_instance() -> None:
             memory_mb=overrides["memory_mb"],
             node=overrides["node"],
             template_vmid=overrides["template_vmid"],
+            lxc_env_vars=lxc_env_vars,
         )
-        # Re-render user-data with real provider_id for the snippet
-        if cfg.defaults.snippets_storage:
+        # Re-render user-data with real provider_id for the snippet (QEMU only)
+        if cfg.defaults.snippets_storage and cfg.defaults.instance_type != "lxc":
             userdata_final = render_userdata(
                 bootstrap=bootstrap,
                 provider_id=instance.provider_id,

@@ -185,3 +185,30 @@ node = "pve1"
 """
     with pytest.raises(ConfigError, match="integer VMID"):
         load_config(_write_config(tmp_path, toml))
+
+
+# ---------------------------------------------------------------------------
+# LXC instance_type
+# ---------------------------------------------------------------------------
+
+
+def test_default_instance_type_is_vm(tmp_path: Path) -> None:
+    cfg = load_config(_write_config(tmp_path, MINIMAL_TOML))
+    assert cfg.defaults.instance_type == "vm"
+    assert cfg.defaults.lxc_unprivileged is True
+
+
+def test_lxc_instance_type_loads(tmp_path: Path) -> None:
+    toml = MINIMAL_TOML + """\
+instance_type = "lxc"
+lxc_unprivileged = false
+"""
+    cfg = load_config(_write_config(tmp_path, toml))
+    assert cfg.defaults.instance_type == "lxc"
+    assert cfg.defaults.lxc_unprivileged is False
+
+
+def test_invalid_instance_type_raises(tmp_path: Path) -> None:
+    toml = MINIMAL_TOML + 'instance_type = "docker"\n'
+    with pytest.raises(ConfigError, match="instance_type"):
+        load_config(_write_config(tmp_path, toml))

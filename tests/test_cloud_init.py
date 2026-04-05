@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from garm_proxmox_provider.cloud_init import _is_gitea, render_userdata
+from garm_proxmox_provider.cloud_init import _is_gitea, render_lxc_env_vars, render_userdata
 from garm_proxmox_provider.config import DefaultsConfig
 from garm_proxmox_provider.models import BootstrapInstance
 
@@ -247,3 +247,77 @@ def test_windows_labels_fallback_to_pool_id() -> None:
     b = _bootstrap(os_type="windows", labels=[])
     ud = render_userdata(b, "2001", _defaults())
     assert "$RunnerLabels = 'pool-111'" in ud
+
+
+# ---------------------------------------------------------------------------
+# render_lxc_env_vars — GitHub
+# ---------------------------------------------------------------------------
+
+
+def test_lxc_env_vars_github_keys_present() -> None:
+    b = _bootstrap()
+    env = render_lxc_env_vars(b, "1001")
+    for key in (
+        "GARM_METADATA_URL",
+        "GARM_INSTANCE_TOKEN",
+        "GARM_REPO_URL",
+        "GARM_LABELS",
+        "GARM_NAME",
+        "GARM_CALLBACK_URL",
+        "GARM_PROVIDER_ID",
+        "GARM_FORGE_TYPE",
+    ):
+        assert key in env, f"Missing key: {key}"
+
+
+def test_lxc_env_vars_github_values() -> None:
+    b = _bootstrap()
+    env = render_lxc_env_vars(b, "1001")
+    assert env["GARM_PROVIDER_ID"] == "1001"
+    assert env["GARM_FORGE_TYPE"] == "github"
+    assert env["GARM_NAME"] == "runner-test"
+    assert env["GARM_REPO_URL"] == "https://github.com/myorg/myrepo"
+    assert env["GARM_INSTANCE_TOKEN"] == "tok-abc123"
+    assert "callback" in env["GARM_CALLBACK_URL"]
+
+
+def test_lxc_env_vars_github_labels_joined() -> None:
+    b = _bootstrap()
+    env = render_lxc_env_vars(b, "1001")
+    assert env["GARM_LABELS"] == "self-hosted,linux"
+
+
+def test_lxc_env_vars_labels_fallback_to_pool_id() -> None:
+    b = _bootstrap(labels=[])
+    env = render_lxc_env_vars(b, "1001")
+    assert env["GARM_LABELS"] == "pool-111"
+
+
+def test_lxc_env_vars_metadata_url_stripped() -> None:
+    b = _bootstrap(metadata_url="https://garm.example.com/api/v1/metadata/")
+    env = render_lxc_env_vars(b, "1001")
+    assert not env["GARM_METADATA_URL"].endswith("/")
+
+
+# ---------------------------------------------------------------------------
+# render_lxc_env_vars — Gitea
+# ---------------------------------------------------------------------------
+
+
+def test_lxc_env_vars_gitea_forge_type() -> None:
+    b = _bootstrap(repo_url="https://gitea.example.com/org/repo")
+    env = render_lxc_env_vars(b, "2001")
+    assert env["GARM_FORGE_TYPE"] == "gitea"
+
+
+def test_lxc_env_vars_gitea_explicit_extra_spec() -> None:
+    b = _bootstrap(extra_specs={"forge_type": "forgejo"})
+    env = render_lxc_env_vars(b, "2001")
+    assert env["GARM_FORGE_TYPE"] == "gitea"
+
+
+def test_lxc_env_vars_provider_id_is_string() -> None:
+    b = _bootstrap()
+    env = render_lxc_env_vars(b, "9999")
+    assert isinstance(env["GARM_PROVIDER_ID"], str)
+    assert env["GARM_PROVIDER_ID"] == "9999"

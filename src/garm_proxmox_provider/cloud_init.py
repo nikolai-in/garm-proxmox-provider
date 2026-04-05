@@ -255,6 +255,28 @@ def _render_windows_userdata(
 # ---------------------------------------------------------------------------
 
 
+def render_lxc_env_vars(bootstrap: BootstrapInstance, provider_id: str) -> dict[str, str]:
+    """Return a dict of environment variables to inject into an LXC container.
+
+    The LXC template image must have a startup script (e.g. via systemd or
+    ``/etc/rc.local``) that reads these variables and performs runner
+    registration.  ``GARM_FORGE_TYPE`` is either ``"github"`` or ``"gitea"``
+    so the startup script can branch accordingly.
+    """
+    labels = ",".join(bootstrap.labels) if bootstrap.labels else bootstrap.pool_id
+    forge_type = "gitea" if _is_gitea(bootstrap) else "github"
+    return {
+        "GARM_METADATA_URL": bootstrap.metadata_url.rstrip("/"),
+        "GARM_INSTANCE_TOKEN": bootstrap.instance_token,
+        "GARM_REPO_URL": bootstrap.repo_url,
+        "GARM_LABELS": labels,
+        "GARM_NAME": bootstrap.name,
+        "GARM_CALLBACK_URL": bootstrap.callback_url,
+        "GARM_PROVIDER_ID": provider_id,
+        "GARM_FORGE_TYPE": forge_type,
+    }
+
+
 def render_userdata(
     bootstrap: BootstrapInstance,
     provider_id: str,

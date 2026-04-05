@@ -34,6 +34,10 @@ class DefaultsConfig:
     ssh_public_key: str | None = None
     snippets_storage: str | None = None
     pool_templates: dict[str, int] = field(default_factory=dict)
+    instance_type: str = "vm"
+    """Either ``"vm"`` (QEMU) or ``"lxc"`` (Proxmox LXC container)."""
+    lxc_unprivileged: bool = True
+    """When True, LXC containers are created as unprivileged (recommended)."""
     """Map of ``"os_type/os_arch"`` → VMID for per-OS template selection.
 
     Example TOML::
@@ -111,6 +115,15 @@ def load_config(path: str) -> Config:
             "At least one of [defaults].template_vmid or [pool_templates] must be set"
         )
 
+    # --- instance_type ----------------------------------------------------
+    instance_type = def_data.get("instance_type", "vm")
+    if instance_type not in ("vm", "lxc"):
+        raise ConfigError(
+            f"[defaults].instance_type must be 'vm' or 'lxc', got {instance_type!r}"
+        )
+
+    lxc_unprivileged = bool(def_data.get("lxc_unprivileged", True))
+
     defaults = DefaultsConfig(
         node=def_data["node"],
         storage=def_data.get("storage", "local-lvm"),
@@ -123,6 +136,8 @@ def load_config(path: str) -> Config:
         ssh_public_key=def_data.get("ssh_public_key"),
         snippets_storage=def_data.get("snippets_storage"),
         pool_templates=pool_templates,
+        instance_type=instance_type,
+        lxc_unprivileged=lxc_unprivileged,
     )
 
     return Config(pve=pve, defaults=defaults)
