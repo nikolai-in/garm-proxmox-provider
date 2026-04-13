@@ -109,6 +109,17 @@ ssh_public_key = "ssh-ed25519 AAAA... user@example"
 - Run provider: `GARM_COMMAND=ListInstances garm-proxmox-provider`
 - Add optional dev tools later: `ruff`, `mypy`, `pytest`.
 
+## Container image (combined GARM + Proxmox provider)
+
+Build and publish the combined image (bundles `garm` + `garm-proxmox-provider`):
+
+```bash
+docker build -t ghcr.io/your-org/garm-proxmox-combined:dev .
+docker push ghcr.io/your-org/garm-proxmox-combined:dev
+```
+
+The image expects `/etc/garm/config.toml` and your provider config (e.g. `/etc/garm/garm-provider-proxmox.toml`) to be mounted at runtime.
+
 ## Versioning & commits
 
 - Follow `.versionrc` (conventional commits, sections like `feat`, `fix`, `docs`, etc.).
