@@ -2,7 +2,7 @@
 # Combined GARM controller + Proxmox external provider
 # This image runs garm as the primary process and bundles the provider binary.
 
-FROM golang:1.22-alpine AS garm-build
+FROM golang:1.23-alpine AS garm-build
 ARG GARM_VERSION=v0.1.6
 
 RUN apk add --no-cache git
@@ -10,13 +10,12 @@ WORKDIR /src
 RUN git clone --depth 1 --branch ${GARM_VERSION} https://github.com/cloudbase/garm.git .
 RUN go build -o /out/garm ./cmd/garm
 
-FROM ghcr.io/astral-sh/uv:0.4.28-python3.14-alpine AS provider-build
+FROM ghcr.io/astral-sh/uv:alpine AS provider-build
 WORKDIR /src
-COPY pyproject.toml uv.lock /src/
-RUN uv sync --frozen --no-dev
+COPY pyproject.toml uv.lock README.md /src/
+RUN uv sync --frozen --no-dev --no-install-project
 COPY src /src/src
 RUN uv build --wheel
-RUN uv pip install --system /src/dist/*.whl
 
 FROM python:3.14-alpine
 LABEL org.opencontainers.image.source="https://github.com/cloudbase/garm"
