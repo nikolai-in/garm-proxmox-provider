@@ -262,7 +262,7 @@ class PVEClient:
             instances.append(
                 Instance(
                     provider_id=str(vmid),
-                    name=meta.get("garm_instance_name", config.get("name", "")),
+                    name=meta.get("garm_instance_name", config.get("name", "")) or "",
                     os_type=meta.get("garm_os_type", "linux"),
                     os_arch=meta.get("garm_os_arch", "amd64"),
                     status=_pve_status_to_garm(res.get("status", "")),
@@ -284,7 +284,7 @@ class PVEClient:
         addresses = self._get_ips_for(node, vmid_int, res_type)
         return Instance(
             provider_id=str(vmid),
-            name=meta.get("garm_instance_name", config.get("name", "")),
+            name=meta.get("garm_instance_name", config.get("name", "")) or "",
             os_type=meta.get("garm_os_type", "linux"),
             os_arch=meta.get("garm_os_arch", "amd64"),
             status=_pve_status_to_garm(res.get("status", "")),
