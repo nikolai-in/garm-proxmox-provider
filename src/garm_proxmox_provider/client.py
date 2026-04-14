@@ -91,7 +91,7 @@ class PVEClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _wait_task(self, node: str, upid: str, timeout: int = 300) -> None:
+    def _wait_task(self, node: str, upid: Any, timeout: int = 300) -> None:
         """Block until the PVE task identified by *upid* finishes."""
         if not upid or not str(upid).startswith("UPID:"):
             return
@@ -99,7 +99,7 @@ class PVEClient:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             status = self._prox.nodes(node).tasks(upid).status.get()
-            if status.get("status") == "stopped":
+            if status and status.get("status") == "stopped":
                 exitstatus = status.get("exitstatus", "UNKNOWN")
                 if exitstatus != "OK":
                     raise RuntimeError(f"PVE task {upid} failed: {exitstatus}")
@@ -121,21 +121,26 @@ class PVEClient:
             pass
 
         try:
-            resources = self._prox.cluster.resources.get(type="vm")
+            resources = self._prox.cluster.resources.get(type="vm") or []
         except Exception as exc:
             logger.warning("Failed to query cluster resources: %s", exc)
             return None
         for res in resources:
-            if (vmid_int is not None and res.get("vmid") == vmid_int) or (
-                vmid_int is None and res.get("name") == vmid
-            ):
+            if not res:
+                continue
+            res_vmid = res.get("vmid")
+            if (
+                vmid_int is not None
+                and res_vmid is not None
+                and int(res_vmid) == vmid_int
+            ) or (vmid_int is None and res.get("name") == vmid):
                 node = res.get("node", self._defaults.node)
                 res_type = res.get("type", "qemu")
                 return node, res, res_type
         return None
 
     def _vm_config(self, node: str, vmid: int) -> dict[str, Any]:
-        return self._prox.nodes(node).qemu(vmid).config.get()
+        return self._prox.nodes(node).qemu(vmid).config.get() or {}
 
     def _get_ips(self, node: str, vmid: int) -> list[Address]:
         """Try to fetch IPs via QEMU guest agent; return empty list on failure."""
@@ -144,20 +149,20 @@ class PVEClient:
                 self._prox.nodes(node).qemu(vmid).agent.get("network-get-interfaces")
             )
             addresses: list[Address] = []
-            for iface in result.get("result", []):
-                if iface.get("name") == "lo":
-                    continue
-                for ip_info in iface.get("ip-addresses", []):
-                    ip = ip_info.get("ip-address", "")
-                    ip_type = ip_info.get("ip-address-type", "ipv4")
-                    if ip and not ip.startswith("169.254") and ip != "::1":
+            if result:
+                for iface in result.get("result", []):
+                    if iface.get("name") == "lo":
+                        continue
+                    for ip_info in iface.get("ip-addresses", []):
+                        ip = ip_info.get("ip-address", "")
+                        ip_type = ip_info.get("ip-address-type", "ipv4")
                         addresses.append(Address(address=ip, type=ip_type))
             return addresses
         except Exception:
             return []
 
     def _lxc_config(self, node: str, vmid: int) -> dict[str, Any]:
-        return self._prox.nodes(node).lxc(vmid).config.get()
+        return self._prox.nodes(node).lxc(vmid).config.get() or {}
 
     def _get_config_for(self, node: str, vmid: int, res_type: str) -> dict[str, Any]:
         """Return the config dict for either a QEMU VM or LXC container."""
@@ -168,21 +173,22 @@ class PVEClient:
     def _lxc_get_ips(self, node: str, vmid: int) -> list[Address]:
         """Fetch IPs from an LXC container's network interfaces."""
         try:
-            result = self._prox.nodes(node).lxc(vmid).interfaces.get()
+            result = self._prox.nodes(node).lxc(vmid).interfaces.get() or []
             addresses: list[Address] = []
-            for iface in result:
-                if iface.get("name") == "lo":
-                    continue
-                ip4 = iface.get("inet", "")
-                ip6 = iface.get("inet6", "")
-                if ip4:
-                    ip = ip4.split("/")[0]
-                    if not ip.startswith("169.254"):
-                        addresses.append(Address(address=ip, type="ipv4"))
-                if ip6:
-                    ip = ip6.split("/")[0]
-                    if ip != "::1":
-                        addresses.append(Address(address=ip, type="ipv6"))
+            if result:
+                for iface in result:
+                    if iface.get("name") == "lo":
+                        continue
+                    ip4 = iface.get("inet", "")
+                    ip6 = iface.get("inet6", "")
+                    if ip4:
+                        ip = ip4.split("/")[0]
+                        if not ip.startswith("169.254"):
+                            addresses.append(Address(address=ip, type="ipv4"))
+                    if ip6:
+                        ip = ip6.split("/")[0]
+                        if ip != "::1":
+                            addresses.append(Address(address=ip, type="ipv6"))
             return addresses
         except Exception:
             return []
@@ -194,7 +200,8 @@ class PVEClient:
         return self._get_ips(node, vmid)
 
     def _next_vmid(self) -> int:
-        return int(self._prox.cluster.nextid.get())
+        next_id = self._prox.cluster.nextid.get()
+        return int(next_id) if next_id is not None else 0
 
     def _resolve_template_vmid(
         self,
@@ -232,7 +239,7 @@ class PVEClient:
     def list_instances(self, pool_id: str) -> list[Instance]:
         """Return all GARM instances belonging to *pool_id* (VMs and containers)."""
         try:
-            resources = self._prox.cluster.resources.get(type="vm")
+            resources = self._prox.cluster.resources.get(type="vm") or []
         except Exception as exc:
             raise RuntimeError(f"Failed to list instances: {exc}") from exc
 
@@ -244,6 +251,8 @@ class PVEClient:
             try:
                 config = self._get_config_for(node, vmid, res_type)
             except Exception:
+                continue
+            if not config:
                 continue
             meta = _parse_garm_meta(config.get("description"))
             if meta is None:
@@ -268,8 +277,9 @@ class PVEClient:
         if found is None:
             raise RuntimeError(f"Instance {vmid} not found")
         node, res, res_type = found
-        vmid_int = int(res.get("vmid"))
-        config = self._get_config_for(node, vmid_int, res_type)
+        vmid_raw = res.get("vmid")
+        vmid_int = int(vmid_raw) if vmid_raw is not None else 0
+        config = self._get_config_for(node, vmid_int, res_type) or {}
         meta = _parse_garm_meta(config.get("description")) or {}
         addresses = self._get_ips_for(node, vmid_int, res_type)
         return Instance(
@@ -502,7 +512,8 @@ class PVEClient:
             logger.info("Instance %s not found; treating delete as no-op", vmid)
             return
         node, res, res_type = found
-        vmid_int = int(res.get("vmid"))
+        vmid_raw = res.get("vmid")
+        vmid_int = int(vmid_raw) if vmid_raw is not None else 0
 
         if res_type == "lxc":
             if res.get("status") == "running":
@@ -554,7 +565,8 @@ class PVEClient:
         if found is None:
             raise RuntimeError(f"Instance {vmid} not found")
         node, res, res_type = found
-        vmid_int = int(res.get("vmid"))
+        vmid_raw = res.get("vmid")
+        vmid_int = int(vmid_raw) if vmid_raw is not None else 0
         if res_type == "lxc":
             upid = self._prox.nodes(node).lxc(vmid_int).status.start.post()
         else:
@@ -568,7 +580,8 @@ class PVEClient:
         if found is None:
             raise RuntimeError(f"Instance {vmid} not found")
         node, res, res_type = found
-        vmid_int = int(res.get("vmid"))
+        vmid_raw = res.get("vmid")
+        vmid_int = int(vmid_raw) if vmid_raw is not None else 0
         if res_type == "lxc":
             upid = self._prox.nodes(node).lxc(vmid_int).status.shutdown.post()
         else:
@@ -579,7 +592,7 @@ class PVEClient:
     def remove_all_instances(self, controller_id: str) -> None:
         """Delete all instances (VMs and containers) tagged with *controller_id*."""
         try:
-            resources = self._prox.cluster.resources.get(type="vm")
+            resources = self._prox.cluster.resources.get(type="vm") or []
         except Exception as exc:
             raise RuntimeError(f"Failed to list instances: {exc}") from exc
 
@@ -590,6 +603,8 @@ class PVEClient:
             try:
                 config = self._get_config_for(node, vmid, res_type)
             except Exception:
+                continue
+            if not config:
                 continue
             meta = _parse_garm_meta(config.get("description"))
             if meta and meta.get("garm_controller_id") == controller_id:

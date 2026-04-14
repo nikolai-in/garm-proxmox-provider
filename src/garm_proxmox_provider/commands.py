@@ -6,7 +6,7 @@ import io
 import json
 import logging
 import sys
-from typing import Any
+from typing import Any, NoReturn
 
 from .client import PVEClient
 from .cloud_init import render_lxc_env_vars, render_userdata
@@ -24,7 +24,7 @@ def _get_config(config_path: str) -> Any:
         _fatal(str(exc))
 
 
-def _fatal(msg: str, exit_code: int = 1) -> None:  # type: ignore[return]
+def _fatal(msg: str, exit_code: int = 1) -> NoReturn:
     print(msg, file=sys.stderr)
     sys.exit(exit_code)
 

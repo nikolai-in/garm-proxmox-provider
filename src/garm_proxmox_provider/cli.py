@@ -208,7 +208,7 @@ def test_connection_cmd(config: str) -> None:
     try:
         cfg = load_config(config)
         client = PVEClient(cfg)
-        version = client._prox.version.get()
+        version = client._prox.version.get() or {}
         click.echo(
             f"Connection successful! Proxmox VE version: {version.get('version')}"
         )
@@ -233,7 +233,7 @@ def list_templates_cmd(config: str) -> None:
         cfg = load_config(config)
         client = PVEClient(cfg)
         res_type = "qemu" if cfg.defaults.instance_type == "vm" else "lxc"
-        resources = client._prox.cluster.resources.get(type=res_type)
+        resources = client._prox.cluster.resources.get(type=res_type) or []
         templates = [r for r in resources if str(r.get("template", "0")) == "1"]
 
         if not templates:
