@@ -250,7 +250,7 @@ def test_create_instance_lxc_clones_lxc_template() -> None:
     )
     assert clone_kwargs["newid"] == 201
     assert clone_kwargs["hostname"] == "runner-lxc-1"
-    assert clone_kwargs["full"] == 1
+    assert clone_kwargs["full"] == 0
 
     # config was updated via PUT (not POST)
     mock_prox.nodes.return_value.lxc.return_value.config.put.assert_called_once()

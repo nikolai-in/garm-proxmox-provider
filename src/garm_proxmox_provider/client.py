@@ -381,8 +381,7 @@ class PVEClient:
             .clone.post(
                 newid=vmid,
                 name=name,
-                full=1,
-                storage=d.storage,
+                full=0,
                 **({"pool": d.pool} if d.pool else {}),
             )
         )
@@ -455,8 +454,7 @@ class PVEClient:
             .clone.post(
                 newid=vmid,
                 hostname=name,
-                full=1,
-                storage=d.storage,
+                full=0,
                 **({"pool": d.pool} if d.pool else {}),
             )
         )
