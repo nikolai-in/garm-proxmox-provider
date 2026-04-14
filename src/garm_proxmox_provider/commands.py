@@ -106,6 +106,7 @@ def cmd_create_instance() -> None:
             node=overrides["node"],
             template_vmid=overrides["template_vmid"],
             lxc_env_vars=lxc_env_vars,
+            image=bootstrap.image,
         )
         # Re-render user-data with real provider_id for the snippet (QEMU only)
         if cfg.defaults.snippets_storage and cfg.defaults.instance_type != "lxc":
@@ -126,7 +127,9 @@ def cmd_create_instance() -> None:
                     file=io.BytesIO(userdata_final.encode("utf-8")),
                 )
             except Exception as exc:
-                logger.warning("Failed to update cloud-init snippet with real VMID: %s", exc)
+                logger.warning(
+                    "Failed to update cloud-init snippet with real VMID: %s", exc
+                )
     except Exception as exc:
         err_instance = Instance(
             provider_id="",

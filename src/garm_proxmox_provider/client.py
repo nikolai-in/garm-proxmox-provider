@@ -133,8 +133,8 @@ class PVEClient:
     def _get_ips(self, node: str, vmid: int) -> list[Address]:
         """Try to fetch IPs via QEMU guest agent; return empty list on failure."""
         try:
-            result = self._prox.nodes(node).qemu(vmid).agent.get(
-                "network-get-interfaces"
+            result = (
+                self._prox.nodes(node).qemu(vmid).agent.get("network-get-interfaces")
             )
             addresses: list[Address] = []
             for iface in result.get("result", []):
@@ -194,23 +194,27 @@ class PVEClient:
         os_type: str,
         os_arch: str,
         override: int | None = None,
+        image: str = "",
     ) -> int:
-        """Return the template VMID to clone for the given OS type/arch.
+        """Return the template VMID to clone for the given OS type/arch or image.
 
         Priority:
         1. ``override`` (per-instance ``extra_specs.template_vmid``)
-        2. ``pool_templates["os_type/os_arch"]``
-        3. ``defaults.template_vmid`` (fallback)
+        2. ``pool_templates[image]``
+        3. ``pool_templates["os_type/os_arch"]``
+        4. ``defaults.template_vmid`` (fallback)
         """
         if override is not None:
             return override
+        if image and image in self._defaults.pool_templates:
+            return self._defaults.pool_templates[image]
         key = f"{os_type}/{os_arch}"
         if key in self._defaults.pool_templates:
             return self._defaults.pool_templates[key]
         if self._defaults.template_vmid is not None:
             return self._defaults.template_vmid
         raise RuntimeError(
-            f"No template_vmid configured for {key!r}. "
+            f"No template_vmid configured for image {image!r} or {key!r}. "
             "Set [defaults].template_vmid or add an entry to [pool_templates]."
         )
 
@@ -285,6 +289,7 @@ class PVEClient:
         node: str | None = None,
         template_vmid: int | None = None,
         lxc_env_vars: dict[str, str] | None = None,
+        image: str = "",
     ) -> Instance:
         """Clone template, configure and start instance; return Instance.
 
@@ -298,7 +303,7 @@ class PVEClient:
         cores = cores or d.cores
         memory_mb = memory_mb or d.memory_mb
 
-        tmpl_vmid = self._resolve_template_vmid(os_type, os_arch, template_vmid)
+        tmpl_vmid = self._resolve_template_vmid(os_type, os_arch, template_vmid, image)
         vmid = self._next_vmid()
         garm_meta = _build_garm_meta(controller_id, pool_id, name, os_type, os_arch)
 
@@ -350,12 +355,16 @@ class PVEClient:
         d = self._defaults
         logger.info("Cloning QEMU template %d -> VMID %d (%s)", tmpl_vmid, vmid, name)
 
-        upid = self._prox.nodes(node).qemu(tmpl_vmid).clone.post(
-            newid=vmid,
-            name=name,
-            full=1,
-            storage=d.storage,
-            **({"pool": d.pool} if d.pool else {}),
+        upid = (
+            self._prox.nodes(node)
+            .qemu(tmpl_vmid)
+            .clone.post(
+                newid=vmid,
+                name=name,
+                full=1,
+                storage=d.storage,
+                **({"pool": d.pool} if d.pool else {}),
+            )
         )
         self._wait_task(node, upid)
 
@@ -419,12 +428,16 @@ class PVEClient:
         d = self._defaults
         logger.info("Cloning LXC template %d -> VMID %d (%s)", tmpl_vmid, vmid, name)
 
-        upid = self._prox.nodes(node).lxc(tmpl_vmid).clone.post(
-            newid=vmid,
-            hostname=name,
-            full=1,
-            storage=d.storage,
-            **({"pool": d.pool} if d.pool else {}),
+        upid = (
+            self._prox.nodes(node)
+            .lxc(tmpl_vmid)
+            .clone.post(
+                newid=vmid,
+                hostname=name,
+                full=1,
+                storage=d.storage,
+                **({"pool": d.pool} if d.pool else {}),
+            )
         )
         self._wait_task(node, upid)
 
@@ -488,9 +501,15 @@ class PVEClient:
                 upid = self._prox.nodes(node).qemu(vmid_int).status.stop.post()
                 self._wait_task(node, upid, timeout=120)
             except Exception as exc:
-                logger.warning("Failed to stop VM %d: %s; proceeding to delete", vmid_int, exc)
+                logger.warning(
+                    "Failed to stop VM %d: %s; proceeding to delete", vmid_int, exc
+                )
 
-        upid = self._prox.nodes(node).qemu(vmid_int).delete(purge=1, **{"destroy-unreferenced-disks": 1})
+        upid = (
+            self._prox.nodes(node)
+            .qemu(vmid_int)
+            .delete(purge=1, **{"destroy-unreferenced-disks": 1})
+        )
         self._wait_task(node, upid)
         logger.info("VM %d deleted", vmid_int)
 
