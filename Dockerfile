@@ -2,13 +2,8 @@
 # Combined GARM controller + Proxmox external provider
 # This image runs garm as the primary process and bundles the provider binary.
 
-FROM golang:1.23-alpine AS garm-build
 ARG GARM_VERSION=v0.1.6
-
-RUN apk add --no-cache git gcc musl-dev
-WORKDIR /src
-RUN git clone --depth 1 --branch ${GARM_VERSION} https://github.com/cloudbase/garm.git .
-RUN CGO_ENABLED=1 go build -o /out/garm ./cmd/garm
+FROM ghcr.io/cloudbase/garm:${GARM_VERSION} AS garm-bin
 
 FROM ghcr.io/astral-sh/uv:alpine AS provider-build
 WORKDIR /src
@@ -26,7 +21,7 @@ RUN apk add --no-cache ca-certificates tini openssl libffi
 WORKDIR /opt/garm
 
 # GARM binary
-COPY --from=garm-build /out/garm /usr/local/bin/garm
+COPY --from=garm-bin /bin/garm /usr/local/bin/garm
 
 # Provider install (wheel built in provider stage)
 COPY --from=provider-build /src/dist/*.whl /tmp/
