@@ -78,19 +78,15 @@ def cmd_create_instance() -> None:
     bootstrap = BootstrapInstance.from_dict(data)
     overrides = _apply_extra_specs(bootstrap, cfg)
 
-    if cfg.defaults.instance_type == "lxc":
-        lxc_env_vars: dict[str, Any] | None = render_lxc_env_vars(
-            bootstrap=bootstrap,
-            provider_id="PLACEHOLDER",
-        )
-        userdata = ""
-    else:
-        lxc_env_vars = None
-        userdata = render_userdata(
-            bootstrap=bootstrap,
-            provider_id="PLACEHOLDER",  # real VMID not known yet
-            defaults=cfg.defaults,
-        )
+    lxc_env_vars: dict[str, Any] | None = render_lxc_env_vars(
+        bootstrap=bootstrap,
+        provider_id="PLACEHOLDER",
+    )
+    userdata = render_userdata(
+        bootstrap=bootstrap,
+        provider_id="PLACEHOLDER",  # real VMID not known yet
+        defaults=cfg.defaults,
+    )
 
     client = PVEClient(cfg)
     try:

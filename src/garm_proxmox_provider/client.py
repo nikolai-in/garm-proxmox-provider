@@ -314,7 +314,12 @@ class PVEClient:
         vmid = self._next_vmid()
         garm_meta = _build_garm_meta(controller_id, pool_id, name, os_type, os_arch)
 
-        if d.instance_type == "lxc":
+        found_tmpl = self._find_instance(tmpl_vmid)
+        if found_tmpl is None:
+            raise RuntimeError(f"Template VMID {tmpl_vmid} not found in cluster")
+        _, _, res_type = found_tmpl
+
+        if res_type == "lxc":
             return self._create_lxc(
                 vmid=vmid,
                 tmpl_vmid=tmpl_vmid,
