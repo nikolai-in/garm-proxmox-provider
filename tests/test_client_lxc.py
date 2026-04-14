@@ -9,9 +9,8 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from garm_proxmox_provider.client import PVEClient, _parse_garm_meta
-from garm_proxmox_provider.config import DefaultsConfig, PVEConfig, Config
+from garm_proxmox_provider.config import Config, DefaultsConfig, PVEConfig
 from garm_proxmox_provider.models import Address, Instance, InstanceStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,7 +51,9 @@ def _make_config(instance_type: str = "lxc", **kwargs: Any) -> Config:
     return Config(pve=pve, defaults=defaults)
 
 
-def _make_client(instance_type: str = "lxc", **cfg_kwargs: Any) -> tuple[PVEClient, MagicMock]:
+def _make_client(
+    instance_type: str = "lxc", **cfg_kwargs: Any
+) -> tuple[PVEClient, MagicMock]:
     """Return (client, mock_prox) with a patched proxmoxer.ProxmoxAPI."""
     cfg = _make_config(instance_type=instance_type, **cfg_kwargs)
     with patch("garm_proxmox_provider.client.ProxmoxAPI") as MockAPI:
@@ -193,15 +194,22 @@ def test_get_instance_lxc_not_found() -> None:
 
 def test_create_instance_lxc_clones_lxc_template() -> None:
     client, mock_prox = _make_client()
+    mock_prox.cluster.resources.get.return_value = [
+        {"vmid": 9100, "node": "pve1", "type": "lxc"}
+    ]
 
     mock_prox.cluster.nextid.get.return_value = 201
-    mock_prox.nodes.return_value.lxc.return_value.clone.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.clone.post.return_value = (
+        "UPID:pve1:ok"
+    )
     mock_prox.nodes.return_value.tasks.return_value.status.get.return_value = {
         "status": "stopped",
         "exitstatus": "OK",
     }
     mock_prox.nodes.return_value.lxc.return_value.config.put.return_value = None
-    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = (
+        "UPID:pve1:ok"
+    )
 
     inst = client.create_instance(
         name="runner-lxc-1",
@@ -224,7 +232,9 @@ def test_create_instance_lxc_clones_lxc_template() -> None:
 
     # clone used lxc endpoint
     mock_prox.nodes.return_value.lxc.return_value.clone.post.assert_called_once()
-    clone_kwargs = mock_prox.nodes.return_value.lxc.return_value.clone.post.call_args.kwargs
+    clone_kwargs = (
+        mock_prox.nodes.return_value.lxc.return_value.clone.post.call_args.kwargs
+    )
     assert clone_kwargs["newid"] == 201
     assert clone_kwargs["hostname"] == "runner-lxc-1"
     assert clone_kwargs["full"] == 1
@@ -238,15 +248,22 @@ def test_create_instance_lxc_clones_lxc_template() -> None:
 
 def test_create_instance_lxc_env_vars_injected() -> None:
     client, mock_prox = _make_client()
+    mock_prox.cluster.resources.get.return_value = [
+        {"vmid": 9100, "node": "pve1", "type": "lxc"}
+    ]
 
     mock_prox.cluster.nextid.get.return_value = 202
-    mock_prox.nodes.return_value.lxc.return_value.clone.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.clone.post.return_value = (
+        "UPID:pve1:ok"
+    )
     mock_prox.nodes.return_value.tasks.return_value.status.get.return_value = {
         "status": "stopped",
         "exitstatus": "OK",
     }
     mock_prox.nodes.return_value.lxc.return_value.config.put.return_value = None
-    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = (
+        "UPID:pve1:ok"
+    )
 
     env_vars = {
         "GARM_METADATA_URL": "https://garm.example.com/api/v1/metadata",
@@ -265,7 +282,9 @@ def test_create_instance_lxc_env_vars_injected() -> None:
         lxc_env_vars=env_vars,
     )
 
-    put_kwargs = mock_prox.nodes.return_value.lxc.return_value.config.put.call_args.kwargs
+    put_kwargs = (
+        mock_prox.nodes.return_value.lxc.return_value.config.put.call_args.kwargs
+    )
 
     # Should have lxc[N] keys for environment injection
     lxc_keys = [k for k in put_kwargs if k.startswith("lxc[")]
@@ -285,15 +304,22 @@ def test_create_instance_lxc_env_vars_injected() -> None:
 
 def test_create_instance_lxc_privileged_container() -> None:
     client, mock_prox = _make_client(lxc_unprivileged=False)
+    mock_prox.cluster.resources.get.return_value = [
+        {"vmid": 9100, "node": "pve1", "type": "lxc"}
+    ]
 
     mock_prox.cluster.nextid.get.return_value = 203
-    mock_prox.nodes.return_value.lxc.return_value.clone.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.clone.post.return_value = (
+        "UPID:pve1:ok"
+    )
     mock_prox.nodes.return_value.tasks.return_value.status.get.return_value = {
         "status": "stopped",
         "exitstatus": "OK",
     }
     mock_prox.nodes.return_value.lxc.return_value.config.put.return_value = None
-    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = (
+        "UPID:pve1:ok"
+    )
 
     client.create_instance(
         name="runner-priv",
@@ -302,7 +328,9 @@ def test_create_instance_lxc_privileged_container() -> None:
         lxc_env_vars={"GARM_PROVIDER_ID": "PLACEHOLDER"},
     )
 
-    put_kwargs = mock_prox.nodes.return_value.lxc.return_value.config.put.call_args.kwargs
+    put_kwargs = (
+        mock_prox.nodes.return_value.lxc.return_value.config.put.call_args.kwargs
+    )
     assert put_kwargs.get("unprivileged") == 0
 
 
@@ -319,7 +347,9 @@ def test_delete_lxc_running_container_stops_then_deletes() -> None:
     ]
     stop_upid = "UPID:pve1:stop"
     delete_upid = "UPID:pve1:del"
-    mock_prox.nodes.return_value.lxc.return_value.status.stop.post.return_value = stop_upid
+    mock_prox.nodes.return_value.lxc.return_value.status.stop.post.return_value = (
+        stop_upid
+    )
     mock_prox.nodes.return_value.lxc.return_value.delete.return_value = delete_upid
     mock_prox.nodes.return_value.tasks.return_value.status.get.return_value = {
         "status": "stopped",
@@ -370,7 +400,9 @@ def test_start_lxc_instance() -> None:
     mock_prox.cluster.resources.get.return_value = [
         {"vmid": 200, "node": "pve1", "type": "lxc", "status": "stopped"},
     ]
-    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.status.start.post.return_value = (
+        "UPID:pve1:ok"
+    )
     mock_prox.nodes.return_value.tasks.return_value.status.get.return_value = {
         "status": "stopped",
         "exitstatus": "OK",
@@ -392,7 +424,9 @@ def test_stop_lxc_instance() -> None:
     mock_prox.cluster.resources.get.return_value = [
         {"vmid": 200, "node": "pve1", "type": "lxc", "status": "running"},
     ]
-    mock_prox.nodes.return_value.lxc.return_value.status.shutdown.post.return_value = "UPID:pve1:ok"
+    mock_prox.nodes.return_value.lxc.return_value.status.shutdown.post.return_value = (
+        "UPID:pve1:ok"
+    )
     mock_prox.nodes.return_value.tasks.return_value.status.get.return_value = {
         "status": "stopped",
         "exitstatus": "OK",
@@ -494,6 +528,8 @@ def test_lxc_get_ips_skips_link_local() -> None:
 
 def test_lxc_get_ips_returns_empty_on_exception() -> None:
     client, mock_prox = _make_client()
-    mock_prox.nodes.return_value.lxc.return_value.interfaces.get.side_effect = RuntimeError("oops")
+    mock_prox.nodes.return_value.lxc.return_value.interfaces.get.side_effect = (
+        RuntimeError("oops")
+    )
     ips = client._lxc_get_ips("pve1", 200)
     assert ips == []

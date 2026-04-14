@@ -1,11 +1,10 @@
-"""GARM command handlers — one function per supported GARM_COMMAND."""
+"""GARM command handlers — core logic decoupled from environment variables."""
 
 from __future__ import annotations
 
 import io
 import json
 import logging
-import os
 import sys
 from typing import Any
 
@@ -17,17 +16,8 @@ from .models import BootstrapInstance, Instance, InstanceStatus
 logger = logging.getLogger(__name__)
 
 
-def _get_env(name: str) -> str:
-    """Return env var *name* or exit with a descriptive error."""
-    value = os.environ.get(name, "")
-    if not value:
-        _fatal(f"Required environment variable {name!r} is not set")
-    return value
-
-
-def _get_config() -> Any:
-    """Load provider config from GARM_PROVIDER_CONFIG_FILE."""
-    config_path = _get_env("GARM_PROVIDER_CONFIG_FILE")
+def _get_config(config_path: str) -> Any:
+    """Load provider config from the given path."""
     try:
         return load_config(config_path)
     except ConfigError as exc:
@@ -64,14 +54,13 @@ def _apply_extra_specs(bootstrap: BootstrapInstance, cfg: Any) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def cmd_create_instance() -> None:
-    """CreateInstance: read bootstrap JSON from stdin, create VM, print Instance."""
-    cfg = _get_config()
-    raw = sys.stdin.read()
-    if not raw.strip():
-        _fatal("CreateInstance requires bootstrap JSON on stdin")
+def create_instance(config_path: str, bootstrap_data: str) -> None:
+    """CreateInstance: create VM, print Instance."""
+    cfg = _get_config(config_path)
+    if not bootstrap_data.strip():
+        _fatal("CreateInstance requires bootstrap JSON")
     try:
-        data = json.loads(raw)
+        data = json.loads(bootstrap_data)
     except json.JSONDecodeError as exc:
         _fatal(f"Invalid bootstrap JSON: {exc}")
 
@@ -140,33 +129,30 @@ def cmd_create_instance() -> None:
     _print_instance(instance)
 
 
-def cmd_delete_instance() -> None:
+def delete_instance(config_path: str, instance_id: str) -> None:
     """DeleteInstance: stop and destroy VM; no-op if missing."""
-    cfg = _get_config()
-    vmid = _get_env("GARM_INSTANCE_ID")
+    cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
-        client.delete_instance(vmid)
+        client.delete_instance(instance_id)
     except Exception as exc:
         _fatal(f"DeleteInstance failed: {exc}")
 
 
-def cmd_get_instance() -> None:
+def get_instance(config_path: str, instance_id: str) -> None:
     """GetInstance: return current state of the VM as Instance JSON."""
-    cfg = _get_config()
-    vmid = _get_env("GARM_INSTANCE_ID")
+    cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
-        instance = client.get_instance(vmid)
+        instance = client.get_instance(instance_id)
     except Exception as exc:
         _fatal(f"GetInstance failed: {exc}")
     _print_instance(instance)
 
 
-def cmd_list_instances() -> None:
+def list_instances(config_path: str, pool_id: str) -> None:
     """ListInstances: return JSON array of Instance for the pool."""
-    cfg = _get_config()
-    pool_id = _get_env("GARM_POOL_ID")
+    cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
         instances = client.list_instances(pool_id)
@@ -175,10 +161,9 @@ def cmd_list_instances() -> None:
     print(json.dumps([i.to_dict() for i in instances]))
 
 
-def cmd_remove_all_instances() -> None:
+def remove_all_instances(config_path: str, controller_id: str) -> None:
     """RemoveAllInstances: delete all VMs belonging to this controller."""
-    cfg = _get_config()
-    controller_id = _get_env("GARM_CONTROLLER_ID")
+    cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
         client.remove_all_instances(controller_id)
@@ -186,40 +171,21 @@ def cmd_remove_all_instances() -> None:
         _fatal(f"RemoveAllInstances failed: {exc}")
 
 
-def cmd_start() -> None:
+def start(config_path: str, instance_id: str) -> None:
     """Start: power on VM."""
-    cfg = _get_config()
-    vmid = _get_env("GARM_INSTANCE_ID")
+    cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
-        instance = client.start_instance(vmid)
+        client.start_instance(instance_id)
     except Exception as exc:
         _fatal(f"Start failed: {exc}")
-    _print_instance(instance)
 
 
-def cmd_stop() -> None:
+def stop(config_path: str, instance_id: str) -> None:
     """Stop: ACPI shutdown of VM."""
-    cfg = _get_config()
-    vmid = _get_env("GARM_INSTANCE_ID")
+    cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
-        instance = client.stop_instance(vmid)
+        client.stop_instance(instance_id)
     except Exception as exc:
         _fatal(f"Stop failed: {exc}")
-    _print_instance(instance)
-
-
-# ---------------------------------------------------------------------------
-# Dispatch table
-# ---------------------------------------------------------------------------
-
-COMMANDS: dict[str, Any] = {
-    "CreateInstance": cmd_create_instance,
-    "DeleteInstance": cmd_delete_instance,
-    "GetInstance": cmd_get_instance,
-    "ListInstances": cmd_list_instances,
-    "RemoveAllInstances": cmd_remove_all_instances,
-    "Start": cmd_start,
-    "Stop": cmd_stop,
-}

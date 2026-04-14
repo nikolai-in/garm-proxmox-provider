@@ -81,21 +81,11 @@ def test_list_instances(config_file: str, capsys: pytest.CaptureFixture[str]) ->
         _mock_instance(provider_id="1001"),
         _mock_instance(provider_id="1002"),
     ]
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {
-                "GARM_COMMAND": "ListInstances",
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-                "GARM_POOL_ID": "pool-111",
-            },
-        ),
-    ):
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.list_instances.return_value = instances
-        from garm_proxmox_provider.commands import cmd_list_instances
+        from garm_proxmox_provider.commands import list_instances
 
-        cmd_list_instances()
+        list_instances(config_file, "pool-111")
 
     out = capsys.readouterr().out
     payload = json.loads(out)
@@ -110,20 +100,11 @@ def test_list_instances(config_file: str, capsys: pytest.CaptureFixture[str]) ->
 
 
 def test_get_instance(config_file: str, capsys: pytest.CaptureFixture[str]) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-                "GARM_INSTANCE_ID": "1001",
-            },
-        ),
-    ):
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.get_instance.return_value = _mock_instance()
-        from garm_proxmox_provider.commands import cmd_get_instance
+        from garm_proxmox_provider.commands import get_instance
 
-        cmd_get_instance()
+        get_instance(config_file, "1001")
 
     out = capsys.readouterr().out
     payload = json.loads(out)
@@ -136,24 +117,12 @@ def test_get_instance(config_file: str, capsys: pytest.CaptureFixture[str]) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_create_instance(
-    config_file: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-            },
-        ),
-        patch("sys.stdin") as mock_stdin,
-    ):
-        mock_stdin.read.return_value = json.dumps(BOOTSTRAP_PAYLOAD)
+def test_create_instance(config_file: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.create_instance.return_value = _mock_instance()
-        from garm_proxmox_provider.commands import cmd_create_instance
+        from garm_proxmox_provider.commands import create_instance
 
-        cmd_create_instance()
+        create_instance(config_file, json.dumps(BOOTSTRAP_PAYLOAD))
 
     out = capsys.readouterr().out
     payload = json.loads(out)
@@ -164,20 +133,10 @@ def test_create_instance(
 def test_create_instance_invalid_json(
     config_file: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with (
-        patch.dict(
-            os.environ,
-            {
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-            },
-        ),
-        patch("sys.stdin") as mock_stdin,
-        pytest.raises(SystemExit) as exc_info,
-    ):
-        mock_stdin.read.return_value = "not-json"
-        from garm_proxmox_provider.commands import cmd_create_instance
+    with pytest.raises(SystemExit) as exc_info:
+        from garm_proxmox_provider.commands import create_instance
 
-        cmd_create_instance()
+        create_instance(config_file, "not-json")
 
     assert exc_info.value.code != 0
 
@@ -188,20 +147,11 @@ def test_create_instance_invalid_json(
 
 
 def test_delete_instance(config_file: str) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-                "GARM_INSTANCE_ID": "1001",
-            },
-        ),
-    ):
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.delete_instance.return_value = None
-        from garm_proxmox_provider.commands import cmd_delete_instance
+        from garm_proxmox_provider.commands import delete_instance
 
-        cmd_delete_instance()  # should not raise
+        delete_instance(config_file, "1001")  # should not raise
 
     MockClient.return_value.delete_instance.assert_called_once_with("1001")
 
@@ -211,52 +161,30 @@ def test_delete_instance(config_file: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_start_instance(
-    config_file: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-                "GARM_INSTANCE_ID": "1001",
-            },
-        ),
-    ):
+def test_start_instance(config_file: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.start_instance.return_value = _mock_instance()
-        from garm_proxmox_provider.commands import cmd_start
+        from garm_proxmox_provider.commands import start
 
-        cmd_start()
+        start(config_file, "1001")
 
     out = capsys.readouterr().out
-    payload = json.loads(out)
-    assert payload["status"] == "running"
+    assert not out.strip()
+    MockClient.return_value.start_instance.assert_called_once_with("1001")
 
 
-def test_stop_instance(
-    config_file: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-                "GARM_INSTANCE_ID": "1001",
-            },
-        ),
-    ):
+def test_stop_instance(config_file: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.stop_instance.return_value = _mock_instance(
             status=InstanceStatus.STOPPED
         )
-        from garm_proxmox_provider.commands import cmd_stop
+        from garm_proxmox_provider.commands import stop
 
-        cmd_stop()
+        stop(config_file, "1001")
 
     out = capsys.readouterr().out
-    payload = json.loads(out)
-    assert payload["status"] == "stopped"
+    assert not out.strip()
+    MockClient.return_value.stop_instance.assert_called_once_with("1001")
 
 
 # ---------------------------------------------------------------------------
@@ -265,20 +193,11 @@ def test_stop_instance(
 
 
 def test_remove_all_instances(config_file: str) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {
-                "GARM_PROVIDER_CONFIG_FILE": config_file,
-                "GARM_CONTROLLER_ID": "ctrl-222",
-            },
-        ),
-    ):
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.remove_all_instances.return_value = None
-        from garm_proxmox_provider.commands import cmd_remove_all_instances
+        from garm_proxmox_provider.commands import remove_all_instances
 
-        cmd_remove_all_instances()
+        remove_all_instances(config_file, "ctrl-222")
 
     MockClient.return_value.remove_all_instances.assert_called_once_with("ctrl-222")
 
@@ -306,7 +225,9 @@ def test_cli_unknown_command() -> None:
     from garm_proxmox_provider.cli import cli
 
     runner = CliRunner()
-    result = runner.invoke(cli, env={"GARM_COMMAND": "UnknownCommand"}, catch_exceptions=False)
+    result = runner.invoke(
+        cli, env={"GARM_COMMAND": "UnknownCommand"}, catch_exceptions=False
+    )
     assert result.exit_code != 0
 
 
@@ -332,24 +253,16 @@ WINDOWS_BOOTSTRAP_PAYLOAD = {
 def test_create_instance_windows(
     config_file: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {"GARM_PROVIDER_CONFIG_FILE": config_file},
-        ),
-        patch("sys.stdin") as mock_stdin,
-    ):
-        mock_stdin.read.return_value = json.dumps(WINDOWS_BOOTSTRAP_PAYLOAD)
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.create_instance.return_value = _mock_instance(
             provider_id="2001",
             name="runner-win",
             os_type="windows",
             os_arch="amd64",
         )
-        from garm_proxmox_provider.commands import cmd_create_instance
+        from garm_proxmox_provider.commands import create_instance
 
-        cmd_create_instance()
+        create_instance(config_file, json.dumps(WINDOWS_BOOTSTRAP_PAYLOAD))
 
     out = capsys.readouterr().out
     payload = json.loads(out)
@@ -385,22 +298,14 @@ GITEA_BOOTSTRAP_PAYLOAD = {
 def test_create_instance_gitea(
     config_file: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with (
-        patch("garm_proxmox_provider.commands.PVEClient") as MockClient,
-        patch.dict(
-            os.environ,
-            {"GARM_PROVIDER_CONFIG_FILE": config_file},
-        ),
-        patch("sys.stdin") as mock_stdin,
-    ):
-        mock_stdin.read.return_value = json.dumps(GITEA_BOOTSTRAP_PAYLOAD)
+    with patch("garm_proxmox_provider.commands.PVEClient") as MockClient:
         MockClient.return_value.create_instance.return_value = _mock_instance(
             provider_id="3001",
             name="runner-gitea",
         )
-        from garm_proxmox_provider.commands import cmd_create_instance
+        from garm_proxmox_provider.commands import create_instance
 
-        cmd_create_instance()
+        create_instance(config_file, json.dumps(GITEA_BOOTSTRAP_PAYLOAD))
 
     out = capsys.readouterr().out
     payload = json.loads(out)
