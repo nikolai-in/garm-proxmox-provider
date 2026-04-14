@@ -8,7 +8,6 @@ import pytest
 
 from garm_proxmox_provider.config import Config, ConfigError, load_config
 
-
 MINIMAL_TOML = """\
 [pve]
 host = "https://pve.example.com:8006"
@@ -17,20 +16,43 @@ token_name = "garm"
 token_value = "aaaa-bbbb-cccc-dddd"
 verify_ssl = false
 
-[defaults]
+[cluster]
 node = "pve1"
 storage = "local-lvm"
+bridge = "vmbr0"
+
+[images.default]
+template = 9000
+
+[flavors.default]
 cores = 2
 memory_mb = 4096
 disk_gb = 20
-bridge = "vmbr0"
-template_vmid = 9000
 """
 
-FULL_TOML = MINIMAL_TOML + """\
+FULL_TOML = """\
+[pve]
+host = "https://pve.example.com:8006"
+user = "root@pam"
+token_name = "garm"
+token_value = "aaaa-bbbb-cccc-dddd"
+verify_ssl = false
+
+[cluster]
+node = "pve1"
+storage = "local-lvm"
+bridge = "vmbr0"
 snippets_storage = "shared-storage"
 pool = "garm-pool"
 ssh_public_key = "ssh-ed25519 AAAA test@example.com"
+
+[images.default]
+template = 9000
+
+[flavors.default]
+cores = 2
+memory_mb = 4096
+disk_gb = 20
 """
 
 
@@ -49,20 +71,21 @@ def test_load_minimal_config(tmp_path: Path) -> None:
     assert cfg.pve.token_name == "garm"
     assert cfg.pve.token_value == "aaaa-bbbb-cccc-dddd"
     assert cfg.pve.verify_ssl is False
-    assert cfg.defaults.node == "pve1"
-    assert cfg.defaults.template_vmid == 9000
-    assert cfg.defaults.cores == 2
-    assert cfg.defaults.memory_mb == 4096
-    assert cfg.defaults.disk_gb == 20
-    assert cfg.defaults.bridge == "vmbr0"
+    assert cfg.cluster.node == "pve1"
+    assert cfg.cluster.storage == "local-lvm"
+    assert cfg.images["default"].template == 9000
+    assert cfg.flavors["default"].cores == 2
+    assert cfg.flavors["default"].memory_mb == 4096
+    assert cfg.flavors["default"].disk_gb == 20
+    assert cfg.cluster.bridge == "vmbr0"
 
 
 def test_load_full_config(tmp_path: Path) -> None:
     path = _write_config(tmp_path, FULL_TOML)
     cfg = load_config(path)
-    assert cfg.defaults.snippets_storage == "shared-storage"
-    assert cfg.defaults.pool == "garm-pool"
-    assert cfg.defaults.ssh_public_key is not None
+    assert cfg.cluster.snippets_storage == "shared-storage"
+    assert cfg.cluster.pool == "garm-pool"
+    assert cfg.cluster.ssh_public_key == "ssh-ed25519 AAAA test@example.com"
 
 
 def test_missing_pve_host(tmp_path: Path) -> None:
@@ -72,7 +95,7 @@ user = "root@pam"
 token_name = "garm"
 token_value = "aaaa"
 
-[defaults]
+[cluster]
 node = "pve1"
 """
     with pytest.raises(ConfigError, match="host"):
@@ -107,7 +130,7 @@ def test_invalid_toml(tmp_path: Path) -> None:
 
 
 def test_missing_template_source(tmp_path: Path) -> None:
-    """Config with neither template_vmid nor [pool_templates] must fail."""
+    """Config with no images must fail on get_image()."""
     bad = """\
 [pve]
 host = "https://pve.example.com:8006"
@@ -115,41 +138,39 @@ user = "root@pam"
 token_name = "garm"
 token_value = "aaaa"
 
-[defaults]
+[cluster]
 node = "pve1"
 storage = "local-lvm"
 """
-    with pytest.raises(ConfigError, match="template_vmid"):
-        load_config(_write_config(tmp_path, bad))
+    cfg = load_config(_write_config(tmp_path, bad))
+    with pytest.raises(ConfigError, match="not found in provider"):
+        cfg.get_image("default")
 
 
-def test_pool_templates_loaded(tmp_path: Path) -> None:
+def test_images_config(tmp_path: Path) -> None:
     toml = """\
 [pve]
-host = "https://pve.example.com:8006"
+host = "pve.example.com"
 user = "root@pam"
 token_name = "garm"
 token_value = "aaaa"
 
-[defaults]
+[cluster]
 node = "pve1"
 
-[pool_templates]
-"linux/amd64" = 9000
-"linux/arm64" = 9001
-"windows/amd64" = 9002
+[images.default]
+template = 9000
+
+[images.win]
+template = 9002
 """
     cfg = load_config(_write_config(tmp_path, toml))
-    assert cfg.defaults.pool_templates == {
-        "linux/amd64": 9000,
-        "linux/arm64": 9001,
-        "windows/amd64": 9002,
-    }
-    assert cfg.defaults.template_vmid is None
+    assert cfg.images["default"].template == 9000
+    assert cfg.images["win"].template == 9002
 
 
-def test_pool_templates_only_no_default_vmid_ok(tmp_path: Path) -> None:
-    """pool_templates alone (without template_vmid) is a valid config."""
+def test_missing_image_template_raises(tmp_path: Path) -> None:
+    """An image config missing a template field should raise."""
     toml = """\
 [pve]
 host = "https://pve.example.com:8006"
@@ -157,18 +178,17 @@ user = "root@pam"
 token_name = "garm"
 token_value = "aaaa"
 
-[defaults]
+[cluster]
 node = "pve1"
 
-[pool_templates]
-"linux/amd64" = 9000
+[images.broken]
+type = "vm"
 """
-    cfg = load_config(_write_config(tmp_path, toml))
-    assert cfg.defaults.template_vmid is None
-    assert cfg.defaults.pool_templates["linux/amd64"] == 9000
+    with pytest.raises(ConfigError, match="missing required 'template'"):
+        load_config(_write_config(tmp_path, toml))
 
 
-def test_pool_templates_invalid_vmid(tmp_path: Path) -> None:
+def test_invalid_image_type_raises(tmp_path: Path) -> None:
     toml = """\
 [pve]
 host = "https://pve.example.com:8006"
@@ -176,13 +196,14 @@ user = "root@pam"
 token_name = "garm"
 token_value = "aaaa"
 
-[defaults]
+[cluster]
 node = "pve1"
 
-[pool_templates]
-"linux/amd64" = "not-an-int"
+[images.broken]
+template = 9000
+type = "docker"
 """
-    with pytest.raises(ConfigError, match="integer VMID"):
+    with pytest.raises(ConfigError, match="must be 'vm' or 'lxc'"):
         load_config(_write_config(tmp_path, toml))
 
 
@@ -193,21 +214,26 @@ node = "pve1"
 
 def test_default_instance_type_is_vm(tmp_path: Path) -> None:
     cfg = load_config(_write_config(tmp_path, MINIMAL_TOML))
-    assert cfg.defaults.instance_type == "vm"
-    assert cfg.defaults.lxc_unprivileged is True
+    assert cfg.images["default"].type == "vm"
+    assert cfg.images["default"].lxc_unprivileged is True
 
 
 def test_lxc_instance_type_loads(tmp_path: Path) -> None:
-    toml = MINIMAL_TOML + """\
-instance_type = "lxc"
+    toml = """\
+[pve]
+host = "pve.example.com"
+user = "root@pam"
+token_name = "garm"
+token_value = "aaaa"
+
+[cluster]
+node = "pve1"
+
+[images.default]
+template = 9000
+type = "lxc"
 lxc_unprivileged = false
 """
     cfg = load_config(_write_config(tmp_path, toml))
-    assert cfg.defaults.instance_type == "lxc"
-    assert cfg.defaults.lxc_unprivileged is False
-
-
-def test_invalid_instance_type_raises(tmp_path: Path) -> None:
-    toml = MINIMAL_TOML + 'instance_type = "docker"\n'
-    with pytest.raises(ConfigError, match="instance_type"):
-        load_config(_write_config(tmp_path, toml))
+    assert cfg.images["default"].type == "lxc"
+    assert cfg.images["default"].lxc_unprivileged is False

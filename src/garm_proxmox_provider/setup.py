@@ -21,17 +21,22 @@ def lint_config(config_path: str) -> None:
         click.echo("\n--- Configuration Details ---")
         click.echo(f"Proxmox Host : {cfg.pve.host}")
         click.echo(f"Proxmox User : {cfg.pve.user}")
-        click.echo(f"Target Node  : {cfg.defaults.node}")
-        click.echo(f"Target Pool  : {cfg.defaults.pool or '(None)'}")
-        click.echo(f"Storage      : {cfg.defaults.storage}")
-        click.echo(f"Instance Type: {cfg.defaults.instance_type.upper()}")
+        click.echo(f"Target Node  : {cfg.cluster.node}")
+        click.echo(f"Target Pool  : {cfg.cluster.pool or '(None)'}")
+        click.echo(f"Storage      : {cfg.cluster.storage}")
 
-        if cfg.defaults.template_vmid:
-            click.echo(f"Default Template VMID: {cfg.defaults.template_vmid}")
-        if cfg.defaults.pool_templates:
-            click.echo("Pool Templates map:")
-            for os_arch, vmid in cfg.defaults.pool_templates.items():
-                click.echo(f"  - {os_arch}: {vmid}")
+        if cfg.flavors:
+            click.echo("Flavors:")
+            for flavor_name, flavor in cfg.flavors.items():
+                click.echo(
+                    f"  - {flavor_name}: {flavor.cores} cores, {flavor.memory_mb} MB RAM, {flavor.disk_gb} GB disk"
+                )
+        if cfg.images:
+            click.echo("Images:")
+            for image_name, image in cfg.images.items():
+                click.echo(
+                    f"  - {image_name}: Template {image.template}, Type {image.type.upper()}"
+                )
 
     except ConfigError as exc:
         click.echo(f"FAIL: Configuration error: {exc}", err=True)
@@ -131,7 +136,7 @@ def create_garm_environment(
         click.echo(f'token_name = "{garm_token_name}"')
         click.echo(f'token_value = "{token_value}"')
         click.echo(f"verify_ssl = {'true' if verify_ssl else 'false'}")
-        click.echo("\n[defaults]")
+        click.echo("\n[cluster]")
         click.echo('node = "YOUR_NODE_NAME"')
         click.echo(f'pool = "{garm_pool}"')
         click.echo("=" * 60 + "\n")

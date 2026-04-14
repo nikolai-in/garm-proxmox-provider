@@ -225,26 +225,26 @@ def test_connection_cmd(config: str) -> None:
     help="Path to provider TOML config.",
 )
 def list_templates_cmd(config: str) -> None:
-    """List available templates matching the instance_type (qemu/lxc)."""
+    """List all available templates (QEMU and LXC)."""
     from .client import PVEClient
     from .config import load_config
 
     try:
         cfg = load_config(config)
         client = PVEClient(cfg)
-        res_type = "qemu" if cfg.defaults.instance_type == "vm" else "lxc"
-        resources = client._prox.cluster.resources.get(type=res_type) or []
+        # Proxmox API 'type=vm' returns both qemu and lxc resources
+        resources = client._prox.cluster.resources.get(type="vm") or []
         templates = [r for r in resources if str(r.get("template", "0")) == "1"]
 
         if not templates:
-            click.echo(f"No {res_type} templates found.")
+            click.echo("No templates found.")
             return
 
-        click.echo(f"{'VMID':<10} {'NAME':<30} {'NODE':<20}")
-        click.echo("-" * 60)
+        click.echo(f"{'VMID':<10} {'TYPE':<10} {'NAME':<30} {'NODE':<20}")
+        click.echo("-" * 72)
         for t in sorted(templates, key=lambda x: x.get("vmid", 0)):
             click.echo(
-                f"{t.get('vmid', ''):<10} {t.get('name', ''):<30} {t.get('node', ''):<20}"
+                f"{t.get('vmid', ''):<10} {t.get('type', ''):<10} {t.get('name', ''):<30} {t.get('node', ''):<20}"
             )
     except Exception as exc:
         click.echo(f"Failed to list templates: {exc}", err=True)

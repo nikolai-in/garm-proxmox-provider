@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
+from typing import Any
 
-from garm_proxmox_provider.cloud_init import _is_gitea, render_lxc_env_vars, render_userdata
-from garm_proxmox_provider.config import DefaultsConfig
+from garm_proxmox_provider.cloud_init import (
+    _is_gitea,
+    render_lxc_env_vars,
+    render_userdata,
+)
+from garm_proxmox_provider.config import ClusterConfig
 from garm_proxmox_provider.models import BootstrapInstance
 
 
-def _defaults(**kwargs) -> DefaultsConfig:
-    base = dict(node="pve1", template_vmid=9000)
+def _mock_cluster_config(**kwargs: Any) -> ClusterConfig:
+    base = dict(node="pve1", pool="garm")
     base.update(kwargs)
-    return DefaultsConfig(**base)
+    cluster_keys = [
+        "node",
+        "storage",
+        "pool",
+        "bridge",
+        "snippets_storage",
+        "ssh_public_key",
+    ]
+    cluster_data = {k: v for k, v in base.items() if k in cluster_keys}
+    return ClusterConfig(**cluster_data)  # type: ignore[arg-type]
 
 
-def _bootstrap(**kwargs) -> BootstrapInstance:
+def _bootstrap(**kwargs: Any) -> BootstrapInstance:
     base = dict(
         name="runner-test",
         tools=[],
@@ -73,13 +87,13 @@ def test_is_github_explicit_extra_spec_overrides_url() -> None:
 
 def test_linux_github_cloud_config_header() -> None:
     b = _bootstrap()
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert ud.startswith("#cloud-config")
 
 
 def test_linux_github_contains_config_sh() -> None:
     b = _bootstrap()
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "./config.sh" in ud
     assert "--url 'https://github.com/myorg/myrepo'" in ud
     assert "--name 'runner-test'" in ud
@@ -88,7 +102,7 @@ def test_linux_github_contains_config_sh() -> None:
 
 def test_linux_github_contains_callback() -> None:
     b = _bootstrap()
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "callback_url" not in ud  # placeholder replaced
     assert "https://garm.example.com/api/v1/instances/callback" in ud
     assert '"provider_id":"1001"' in ud
@@ -96,7 +110,7 @@ def test_linux_github_contains_callback() -> None:
 
 def test_linux_github_contains_token_fetch() -> None:
     b = _bootstrap()
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "runner-registration-token" in ud
     assert "tok-abc123" in ud
 
@@ -104,7 +118,7 @@ def test_linux_github_contains_token_fetch() -> None:
 def test_linux_github_no_download_steps() -> None:
     """The slimmed script must not contain any tarball download logic."""
     b = _bootstrap()
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "curl" in ud  # still uses curl for token/callback
     assert "tar xzf" not in ud
     assert "apt-get" not in ud
@@ -112,13 +126,15 @@ def test_linux_github_no_download_steps() -> None:
 
 def test_linux_github_svc_sh_start() -> None:
     b = _bootstrap()
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "./svc.sh start" in ud
 
 
 def test_linux_github_ssh_key_injected() -> None:
     b = _bootstrap()
-    ud = render_userdata(b, "1001", _defaults(ssh_public_key="ssh-ed25519 AAAA test@h"))
+    ud = render_userdata(
+        b, "1001", _mock_cluster_config(ssh_public_key="ssh-ed25519 AAAA test@h")
+    )
     assert "ssh_authorized_keys" in ud
     assert "ssh-ed25519 AAAA test@h" in ud
 
@@ -130,7 +146,7 @@ def test_linux_github_ssh_key_injected() -> None:
 
 def test_linux_gitea_uses_act_runner() -> None:
     b = _bootstrap(repo_url="https://gitea.example.com/org/repo")
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "act_runner" in ud
     assert "./act_runner register" in ud
     assert "--instance 'https://gitea.example.com/org/repo'" in ud
@@ -139,13 +155,13 @@ def test_linux_gitea_uses_act_runner() -> None:
 
 def test_linux_gitea_systemctl_start() -> None:
     b = _bootstrap(repo_url="https://gitea.example.com/org/repo")
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "systemctl start act_runner" in ud
 
 
 def test_linux_gitea_no_config_sh() -> None:
     b = _bootstrap(repo_url="https://gitea.example.com/org/repo")
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "config.sh" not in ud
 
 
@@ -156,13 +172,13 @@ def test_linux_gitea_no_config_sh() -> None:
 
 def test_windows_github_ps1_sysnative_header() -> None:
     b = _bootstrap(os_type="windows")
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert ud.startswith("#ps1_sysnative")
 
 
 def test_windows_github_config_cmd() -> None:
     b = _bootstrap(os_type="windows")
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "config.cmd" in ud
     assert "$RepoUrl" in ud
     assert "$RunnerToken" in ud
@@ -172,13 +188,13 @@ def test_windows_github_config_cmd() -> None:
 
 def test_windows_github_svc_cmd_start() -> None:
     b = _bootstrap(os_type="windows")
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "svc.cmd start" in ud
 
 
 def test_windows_github_callback() -> None:
     b = _bootstrap(os_type="windows")
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "Invoke-RestMethod" in ud
     assert "$ProviderId" in ud
     assert "$RunnerName" in ud
@@ -186,14 +202,14 @@ def test_windows_github_callback() -> None:
 
 def test_windows_github_provider_id_substituted() -> None:
     b = _bootstrap(os_type="windows")
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "2001" in ud
     assert "{provider_id}" not in ud
 
 
 def test_windows_github_no_bash_shebang() -> None:
     b = _bootstrap(os_type="windows")
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "#!/bin/bash" not in ud
 
 
@@ -207,7 +223,7 @@ def test_windows_gitea_act_runner_exe() -> None:
         os_type="windows",
         repo_url="https://gitea.example.com/org/repo",
     )
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "act_runner.exe" in ud
     assert "--instance $RepoUrl" in ud
     assert "--no-interactive" in ud
@@ -218,7 +234,7 @@ def test_windows_gitea_start_service() -> None:
         os_type="windows",
         repo_url="https://gitea.example.com/org/repo",
     )
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "Start-Service act_runner" in ud
 
 
@@ -227,7 +243,7 @@ def test_windows_gitea_no_config_cmd() -> None:
         os_type="windows",
         repo_url="https://gitea.example.com/org/repo",
     )
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "config.cmd" not in ud
 
 
@@ -238,13 +254,13 @@ def test_windows_gitea_no_config_cmd() -> None:
 
 def test_linux_labels_fallback_to_pool_id() -> None:
     b = _bootstrap(labels=[])
-    ud = render_userdata(b, "1001", _defaults())
+    ud = render_userdata(b, "1001", _mock_cluster_config())
     assert "--labels 'pool-111'" in ud
 
 
 def test_windows_labels_fallback_to_pool_id() -> None:
     b = _bootstrap(os_type="windows", labels=[])
-    ud = render_userdata(b, "2001", _defaults())
+    ud = render_userdata(b, "2001", _mock_cluster_config())
     assert "$RunnerLabels = 'pool-111'" in ud
 
 

@@ -7,7 +7,6 @@ import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 
 from proxmoxer import ProxmoxAPI
 
@@ -72,20 +71,15 @@ class PVEClient:
     """Thin wrapper around proxmoxer.ProxmoxAPI providing GARM-oriented operations."""
 
     def __init__(self, cfg: Config) -> None:
-        parsed = urlparse(cfg.pve.host)
-        host = parsed.hostname or cfg.pve.host
-        port = parsed.port or 8006
-
         self._prox = ProxmoxAPI(
-            host,
-            port=port,
+            cfg.pve.host,
             user=cfg.pve.user,
             token_name=cfg.pve.token_name,
             token_value=cfg.pve.token_value,
             verify_ssl=cfg.pve.verify_ssl,
             service="PVE",
         )
-        self._defaults = cfg.defaults
+        self._config = cfg
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -117,7 +111,7 @@ class PVEClient:
         vmid_int = None
         try:
             vmid_int = int(vmid)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
         try:
@@ -134,7 +128,7 @@ class PVEClient:
                 and res_vmid is not None
                 and int(res_vmid) == vmid_int
             ) or (vmid_int is None and res.get("name") == vmid):
-                node = res.get("node", self._defaults.node)
+                node = res.get("node", self._config.cluster.node)
                 res_type = res.get("type", "qemu")
                 return node, res, res_type
         return None
@@ -203,35 +197,6 @@ class PVEClient:
         next_id = self._prox.cluster.nextid.get()
         return int(next_id) if next_id is not None else 0
 
-    def _resolve_template_vmid(
-        self,
-        os_type: str,
-        os_arch: str,
-        override: int | None = None,
-        image: str = "",
-    ) -> int:
-        """Return the template VMID to clone for the given OS type/arch or image.
-
-        Priority:
-        1. ``override`` (per-instance ``extra_specs.template_vmid``)
-        2. ``pool_templates[image]``
-        3. ``pool_templates["os_type/os_arch"]``
-        4. ``defaults.template_vmid`` (fallback)
-        """
-        if override is not None:
-            return override
-        if image and image in self._defaults.pool_templates:
-            return self._defaults.pool_templates[image]
-        key = f"{os_type}/{os_arch}"
-        if key in self._defaults.pool_templates:
-            return self._defaults.pool_templates[key]
-        if self._defaults.template_vmid is not None:
-            return self._defaults.template_vmid
-        raise RuntimeError(
-            f"No template_vmid configured for image {image!r} or {key!r}. "
-            "Set [defaults].template_vmid or add an entry to [pool_templates]."
-        )
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -246,7 +211,7 @@ class PVEClient:
         instances: list[Instance] = []
         for res in resources:
             vmid = res.get("vmid")
-            node = res.get("node", self._defaults.node)
+            node = res.get("node", self._config.cluster.node)
             res_type = res.get("type", "qemu")
             try:
                 config = self._get_config_for(node, vmid, res_type)
@@ -310,23 +275,28 @@ class PVEClient:
     ) -> Instance:
         """Clone template, configure and start instance; return Instance.
 
-        For QEMU VMs (*instance_type* == ``"vm"``), injects a cloud-init
-        snippet from *userdata*.  For LXC containers (*instance_type* ==
-        ``"lxc"``), injects bootstrap configuration as LXC environment
-        variables built from *lxc_env_vars*.
+        For QEMU VMs (image type ``"vm"``), injects a cloud-init
+        snippet from *userdata*.  For LXC containers (image type ``"lxc"``),
+        injects bootstrap configuration as LXC environment variables.
         """
-        d = self._defaults
-        node = node or d.node
-        cores = cores or d.cores
-        memory_mb = memory_mb or d.memory_mb
+        image_cfg = self._config.get_image(image)
 
-        tmpl_vmid = self._resolve_template_vmid(os_type, os_arch, template_vmid, image)
+        node = node or self._config.cluster.node
+        if cores is None or memory_mb is None:
+            # We don't have flavor here directly, but the caller should have resolved it.
+            # Fall back to default flavor if None.
+            def_flavor = self._config.get_flavor("default")
+            cores = cores or def_flavor.cores
+            memory_mb = memory_mb or def_flavor.memory_mb
+
+        tmpl_vmid = image_cfg.template
         garm_meta = _build_garm_meta(controller_id, pool_id, name, os_type, os_arch)
 
         found_tmpl = self._find_instance(tmpl_vmid)
         if found_tmpl is None:
             raise RuntimeError(f"Template VMID {tmpl_vmid} not found in cluster")
-        _, _, res_type = found_tmpl
+        _, res_tmpl, res_type = found_tmpl
+        real_tmpl_vmid = int(res_tmpl.get("vmid", 0))
 
         for attempt in range(5):
             vmid = self._next_vmid()
@@ -334,7 +304,7 @@ class PVEClient:
                 if res_type == "lxc":
                     return self._create_lxc(
                         vmid=vmid,
-                        tmpl_vmid=tmpl_vmid,
+                        tmpl_vmid=real_tmpl_vmid,
                         name=name,
                         pool_id=pool_id,
                         garm_meta=garm_meta,
@@ -344,11 +314,12 @@ class PVEClient:
                         memory_mb=memory_mb,
                         node=node,
                         lxc_env_vars=lxc_env_vars or {},
+                        lxc_unprivileged=image_cfg.lxc_unprivileged,
                     )
 
                 return self._create_qemu(
                     vmid=vmid,
-                    tmpl_vmid=tmpl_vmid,
+                    tmpl_vmid=real_tmpl_vmid,
                     name=name,
                     pool_id=pool_id,
                     garm_meta=garm_meta,
@@ -387,7 +358,7 @@ class PVEClient:
         node: str,
     ) -> Instance:
         """Clone a QEMU template, inject cloud-init, start and return Instance."""
-        d = self._defaults
+        d = self._config.cluster
         logger.info("Cloning QEMU template %d -> VMID %d (%s)", tmpl_vmid, vmid, name)
 
         upid = (
@@ -458,9 +429,10 @@ class PVEClient:
         memory_mb: int,
         node: str,
         lxc_env_vars: dict[str, str],
+        lxc_unprivileged: bool,
     ) -> Instance:
         """Clone an LXC template, inject env vars, start and return Instance."""
-        d = self._defaults
+        d = self._config.cluster
         logger.info("Cloning LXC template %d -> VMID %d (%s)", tmpl_vmid, vmid, name)
 
         upid = (
@@ -485,7 +457,7 @@ class PVEClient:
             "cores": cores,
             "memory": memory_mb,
             "description": garm_meta,
-            "unprivileged": int(d.lxc_unprivileged),
+            "unprivileged": int(lxc_unprivileged),
         }
         for i, (key, value) in enumerate(env_vars.items()):
             config_update[f"lxc[{i}]"] = f"lxc.environment: {key}={value}"
@@ -549,11 +521,11 @@ class PVEClient:
         self._wait_task(node, upid)
         logger.info("VM %d deleted", vmid_int)
 
-        d = self._defaults
-        if d.snippets_storage:
+        cluster_cfg = self._config.cluster
+        if cluster_cfg.snippets_storage:
             snippet_name = f"garm-{vmid_int}.yml"
             try:
-                self._prox.nodes(node).storage(d.snippets_storage).content(
+                self._prox.nodes(node).storage(cluster_cfg.snippets_storage).content(
                     f"snippets/{snippet_name}"
                 ).delete()
             except Exception:
@@ -598,7 +570,7 @@ class PVEClient:
 
         for res in resources:
             vmid = res.get("vmid")
-            node = res.get("node", self._defaults.node)
+            node = res.get("node", self._config.cluster.node)
             res_type = res.get("type", "qemu")
             try:
                 config = self._get_config_for(node, vmid, res_type)

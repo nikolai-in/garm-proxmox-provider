@@ -9,7 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from garm_proxmox_provider.client import PVEClient
-from garm_proxmox_provider.config import Config, DefaultsConfig, PVEConfig
+from garm_proxmox_provider.config import (
+    ClusterConfig,
+    Config,
+    FlavorConfig,
+    ImageConfig,
+    PVEConfig,
+)
 from garm_proxmox_provider.models import InstanceStatus
 
 # ---------------------------------------------------------------------------
@@ -37,18 +43,24 @@ def _make_config(instance_type: str = "lxc", **kwargs: Any) -> Config:
         token_value="secret",
         verify_ssl=False,
     )
-    base: dict[str, Any] = dict(
-        node="pve1",
-        storage="local-lvm",
-        template_vmid=9100,
-        cores=2,
-        memory_mb=2048,
-        instance_type=instance_type,
-        lxc_unprivileged=True,
+    cluster = ClusterConfig(
+        node=kwargs.get("node", "pve1"),
+        storage=kwargs.get("storage", "local-lvm"),
     )
-    base.update(kwargs)
-    defaults = DefaultsConfig(**base)
-    return Config(pve=pve, defaults=defaults)
+    flavors = {
+        "default": FlavorConfig(
+            cores=kwargs.get("cores", 2),
+            memory_mb=kwargs.get("memory_mb", 2048),
+        )
+    }
+    images = {
+        "default": ImageConfig(
+            template=kwargs.get("template_vmid", 9100),
+            type=instance_type,
+            lxc_unprivileged=kwargs.get("lxc_unprivileged", True),
+        )
+    }
+    return Config(pve=pve, cluster=cluster, flavors=flavors, images=images)
 
 
 def _make_client(
@@ -215,6 +227,7 @@ def test_create_instance_lxc_clones_lxc_template() -> None:
         name="runner-lxc-1",
         controller_id="ctrl-1",
         pool_id="pool-1",
+        image="default",
         lxc_env_vars={
             "GARM_METADATA_URL": "https://garm.example.com/api/v1/metadata",
             "GARM_INSTANCE_TOKEN": "tok-abc",
@@ -279,6 +292,7 @@ def test_create_instance_lxc_env_vars_injected() -> None:
         name="runner-env-test",
         controller_id="ctrl-1",
         pool_id="pool-1",
+        image="default",
         lxc_env_vars=env_vars,
     )
 
@@ -325,6 +339,7 @@ def test_create_instance_lxc_privileged_container() -> None:
         name="runner-priv",
         controller_id="ctrl-1",
         pool_id="pool-1",
+        image="default",
         lxc_env_vars={"GARM_PROVIDER_ID": "PLACEHOLDER"},
     )
 

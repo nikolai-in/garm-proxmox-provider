@@ -35,13 +35,14 @@ def _print_instance(instance: Instance) -> None:
 
 def _apply_extra_specs(bootstrap: BootstrapInstance, cfg: Any) -> dict[str, Any]:
     """Merge defaults with extra_specs overrides from the bootstrap payload."""
-    d = cfg.defaults
+    c = cfg.cluster
+    f = cfg.get_flavor(bootstrap.flavor)
     overrides: dict[str, Any] = {}
     es = bootstrap.extra_specs
 
-    overrides["cores"] = int(es.get("cores", d.cores))
-    overrides["memory_mb"] = int(es.get("memory_mb", d.memory_mb))
-    overrides["node"] = es.get("node", d.node)
+    overrides["cores"] = int(es.get("cores", f.cores))
+    overrides["memory_mb"] = int(es.get("memory_mb", f.memory_mb))
+    overrides["node"] = es.get("node", c.node)
 
     # Allow per-instance template override via extra_specs
     tmpl_raw = es.get("template_vmid")
@@ -74,7 +75,7 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
     userdata = render_userdata(
         bootstrap=bootstrap,
         provider_id="PLACEHOLDER",  # real VMID not known yet
-        defaults=cfg.defaults,
+        defaults=cfg.cluster,
     )
 
     client = PVEClient(cfg)
@@ -94,18 +95,19 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
             image=bootstrap.image,
         )
         # Re-render user-data with real provider_id for the snippet (QEMU only)
-        if cfg.defaults.snippets_storage and cfg.defaults.instance_type != "lxc":
+        image_cfg = cfg.get_image(bootstrap.image)
+        if cfg.cluster.snippets_storage and image_cfg.type != "lxc":
             userdata_final = render_userdata(
                 bootstrap=bootstrap,
                 provider_id=instance.provider_id,
-                defaults=cfg.defaults,
+                defaults=cfg.cluster,
             )
             # Update snippet in place
             snippet_name = f"garm-{instance.provider_id}.yml"
             node = overrides["node"]
             try:
                 client._prox.nodes(node).storage(
-                    cfg.defaults.snippets_storage
+                    cfg.cluster.snippets_storage
                 ).upload.post(
                     content="snippets",
                     filename=snippet_name,

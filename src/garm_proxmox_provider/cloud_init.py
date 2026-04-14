@@ -18,7 +18,7 @@ import textwrap
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .config import DefaultsConfig
+    from .config import ClusterConfig
     from .models import BootstrapInstance
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ curl -fsSL -X POST \\
 def _render_linux_userdata(
     bootstrap: BootstrapInstance,
     provider_id: str,
-    defaults: DefaultsConfig,
+    defaults: ClusterConfig,
 ) -> str:
     """Render a ``#cloud-config`` YAML document for Linux."""
     labels = ",".join(bootstrap.labels) if bootstrap.labels else bootstrap.pool_id
@@ -295,7 +295,7 @@ def render_lxc_env_vars(
 def render_userdata(
     bootstrap: BootstrapInstance,
     provider_id: str,
-    defaults: DefaultsConfig,
+    defaults: ClusterConfig,
 ) -> str:
     """Return the appropriate user-data document for the bootstrap's OS type."""
     if bootstrap.os_type == "windows":

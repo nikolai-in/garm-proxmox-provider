@@ -20,14 +20,18 @@ token_name = "garm"
 token_value = "aaaa-bbbb-cccc-dddd"
 verify_ssl = false
 
-[defaults]
+[cluster]
 node = "pve1"
 storage = "local-lvm"
-template_vmid = 9000
+bridge = "vmbr0"
+
+[images.default]
+template = 9000
+
+[flavors.default]
 cores = 2
 memory_mb = 4096
 disk_gb = 20
-bridge = "vmbr0"
 """
 
 BOOTSTRAP_PAYLOAD = {
@@ -49,6 +53,8 @@ BOOTSTRAP_PAYLOAD = {
     "controller_id": "ctrl-222",
     "os_type": "linux",
     "os_arch": "amd64",
+    "image": "default",
+    "flavor": "default",
     "labels": ["self-hosted"],
 }
 
@@ -246,6 +252,8 @@ WINDOWS_BOOTSTRAP_PAYLOAD = {
     "controller_id": "ctrl-222",
     "os_type": "windows",
     "os_arch": "amd64",
+    "image": "default",
+    "flavor": "default",
     "labels": ["self-hosted", "windows"],
 }
 
@@ -291,6 +299,8 @@ GITEA_BOOTSTRAP_PAYLOAD = {
     "controller_id": "ctrl-222",
     "os_type": "linux",
     "os_arch": "amd64",
+    "image": "default",
+    "flavor": "default",
     "labels": ["self-hosted"],
 }
 

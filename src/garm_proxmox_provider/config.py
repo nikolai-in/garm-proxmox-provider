@@ -20,40 +20,55 @@ class PVEConfig:
 
 
 @dataclass
-class DefaultsConfig:
+class ClusterConfig:
     node: str
     storage: str = "local-lvm"
     pool: str | None = None
-    template_vmid: int | None = None
+    bridge: str = "vmbr0"
+    snippets_storage: str | None = None
+    ssh_public_key: str | None = None
+
+
+@dataclass
+class FlavorConfig:
     cores: int = 2
     memory_mb: int = 4096
     disk_gb: int = 20
-    bridge: str = "vmbr0"
-    ssh_public_key: str | None = None
-    snippets_storage: str | None = None
-    pool_templates: dict[str, int] = field(default_factory=dict)
-    instance_type: str = "vm"
-    """Either ``"vm"`` (QEMU) or ``"lxc"`` (Proxmox LXC container)."""
+
+
+@dataclass
+class ImageConfig:
+    template: str | int  # Can be a Proxmox VMID (e.g. 9000) or Template Name
+    type: str = "vm"  # "vm" or "lxc"
     lxc_unprivileged: bool = True
-    """When True, LXC containers are created as unprivileged (recommended)."""
-    """Map of ``"os_type/os_arch"`` → VMID for per-OS template selection.
-
-    Example TOML::
-
-        [pool_templates]
-        "linux/amd64"   = 9000
-        "linux/arm64"   = 9001
-        "windows/amd64" = 9002
-
-    When creating an instance, the provider looks up ``os_type/os_arch`` in
-    this map first, then falls back to ``template_vmid``.
-    """
 
 
 @dataclass
 class Config:
     pve: PVEConfig
-    defaults: DefaultsConfig
+    cluster: ClusterConfig
+    flavors: dict[str, FlavorConfig] = field(default_factory=dict)
+    images: dict[str, ImageConfig] = field(default_factory=dict)
+
+    def get_flavor(self, name: str) -> FlavorConfig:
+        """Return the requested flavor, fallback to 'default', or a baseline flavor."""
+        if name and name in self.flavors:
+            return self.flavors[name]
+        if "default" in self.flavors:
+            return self.flavors["default"]
+        return FlavorConfig()
+
+    def get_image(self, name: str) -> ImageConfig:
+        """Return the requested image configuration."""
+        if not name:
+            raise ConfigError(
+                "No image name provided by GARM. Please configure an image in your GARM pool."
+            )
+        if name not in self.images:
+            raise ConfigError(
+                f"Image '{name}' not found in provider [images] configuration."
+            )
+        return self.images[name]
 
 
 def load_config(path: str) -> Config:
@@ -73,69 +88,65 @@ def load_config(path: str) -> Config:
             raise ConfigError(f"[pve].{required} is required")
 
     pve = PVEConfig(
-        host=pve_data["host"],
-        user=pve_data["user"],
-        token_name=pve_data["token_name"],
-        token_value=pve_data["token_value"],
-        verify_ssl=pve_data.get("verify_ssl", True),
+        host=str(pve_data["host"]),
+        user=str(pve_data["user"]),
+        token_name=str(pve_data["token_name"]),
+        token_value=str(pve_data["token_value"]),
+        verify_ssl=bool(pve_data.get("verify_ssl", True)),
     )
 
-    # --- Defaults section --------------------------------------------------
-    def_data = data.get("defaults", {})
-    if not def_data.get("node"):
-        raise ConfigError("[defaults].node is required")
+    # --- Cluster section --------------------------------------------------
+    cluster_data = data.get("cluster", {})
+    if not cluster_data.get("node"):
+        raise ConfigError("[cluster].node is required")
 
-    template_vmid_raw = def_data.get("template_vmid")
-    template_vmid: int | None = None
-    if template_vmid_raw is not None:
-        try:
-            template_vmid = int(template_vmid_raw)
-        except (TypeError, ValueError):
-            raise ConfigError(
-                "[defaults].template_vmid must be an integer"
-            ) from None
-
-    # --- Pool templates section (optional) ------------------------------------
-    # Format: {"linux/amd64": 9000, "windows/amd64": 9002, ...}
-    pool_templates_raw = data.get("pool_templates", {})
-    pool_templates: dict[str, int] = {}
-    for key, val in pool_templates_raw.items():
-        try:
-            pool_templates[str(key)] = int(val)
-        except (TypeError, ValueError):
-            raise ConfigError(
-                f"[pool_templates].{key!r} must be an integer VMID"
-            ) from None
-
-    # Require at least one template source so create_instance always has a VMID
-    if template_vmid is None and not pool_templates:
-        raise ConfigError(
-            "At least one of [defaults].template_vmid or [pool_templates] must be set"
-        )
-
-    # --- instance_type ----------------------------------------------------
-    instance_type = def_data.get("instance_type", "vm")
-    if instance_type not in ("vm", "lxc"):
-        raise ConfigError(
-            f"[defaults].instance_type must be 'vm' or 'lxc', got {instance_type!r}"
-        )
-
-    lxc_unprivileged = bool(def_data.get("lxc_unprivileged", True))
-
-    defaults = DefaultsConfig(
-        node=def_data["node"],
-        storage=def_data.get("storage", "local-lvm"),
-        pool=def_data.get("pool"),
-        template_vmid=template_vmid,
-        cores=int(def_data.get("cores", 2)),
-        memory_mb=int(def_data.get("memory_mb", 4096)),
-        disk_gb=int(def_data.get("disk_gb", 20)),
-        bridge=def_data.get("bridge", "vmbr0"),
-        ssh_public_key=def_data.get("ssh_public_key"),
-        snippets_storage=def_data.get("snippets_storage"),
-        pool_templates=pool_templates,
-        instance_type=instance_type,
-        lxc_unprivileged=lxc_unprivileged,
+    cluster = ClusterConfig(
+        node=str(cluster_data["node"]),
+        storage=str(cluster_data.get("storage", "local-lvm")),
+        pool=str(cluster_data.get("pool")) if cluster_data.get("pool") else None,
+        bridge=str(cluster_data.get("bridge", "vmbr0")),
+        snippets_storage=str(cluster_data.get("snippets_storage"))
+        if cluster_data.get("snippets_storage")
+        else None,
+        ssh_public_key=str(cluster_data.get("ssh_public_key"))
+        if cluster_data.get("ssh_public_key")
+        else None,
     )
 
-    return Config(pve=pve, defaults=defaults)
+    # --- Flavors section --------------------------------------------------
+    flavors_data = data.get("flavors", {})
+    flavors: dict[str, FlavorConfig] = {}
+    for key, val in flavors_data.items():
+        if not isinstance(val, dict):
+            raise ConfigError(f"[flavors].{key} must be a dictionary")
+        flavors[key] = FlavorConfig(
+            cores=int(val.get("cores", 2)),
+            memory_mb=int(val.get("memory_mb", 4096)),
+            disk_gb=int(val.get("disk_gb", 20)),
+        )
+
+    # --- Images section ---------------------------------------------------
+    images_data = data.get("images", {})
+    images: dict[str, ImageConfig] = {}
+    for key, val in images_data.items():
+        if not isinstance(val, dict):
+            raise ConfigError(f"[images].{key} must be a dictionary")
+        if "template" not in val:
+            raise ConfigError(f"[images].{key} is missing required 'template' field")
+
+        type_val = str(val.get("type", "vm"))
+        if type_val not in ("vm", "lxc"):
+            raise ConfigError(f"[images].{key}.type must be 'vm' or 'lxc'")
+
+        images[key] = ImageConfig(
+            template=val["template"],
+            type=type_val,
+            lxc_unprivileged=bool(val.get("lxc_unprivileged", True)),
+        )
+
+    return Config(
+        pve=pve,
+        cluster=cluster,
+        flavors=flavors,
+        images=images,
+    )
