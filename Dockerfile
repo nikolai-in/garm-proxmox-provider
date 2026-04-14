@@ -8,7 +8,10 @@ ARG GARM_VERSION=v0.1.6
 RUN apt-get update && apt-get install -y git curl tar build-essential nodejs npm && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone --depth 1 --branch ${GARM_VERSION} https://github.com/cloudbase/garm.git .
-RUN make build-webui && make build
+RUN cd webapp && npm install && npm run build && \
+    rm -rf assets/_app assets/assets assets/index.html assets/*.png && \
+    cp -r build/* assets/ || true
+RUN CGO_ENABLED=1 make build
 
 FROM ghcr.io/astral-sh/uv:debian-slim AS provider-build
 WORKDIR /src
