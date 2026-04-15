@@ -252,9 +252,11 @@ class PVEClient:
 
     def list_instances(self, pool_id: str) -> list[Instance]:
         """Return all GARM instances belonging to *pool_id* (VMs and containers)."""
+        logger.debug("Listing instances for pool %s", pool_id)
         try:
             resources = self._prox.cluster.resources.get(type="vm") or []
         except Exception as exc:
+            logger.error("Failed to list instances from Proxmox cluster: %s", exc)
             raise RuntimeError(f"Failed to list instances: {exc}") from exc
 
         instances: list[Instance] = []
@@ -459,23 +461,37 @@ class PVEClient:
 
             try:
                 if os_type.lower() == "windows":
-                    self._prox.nodes(node).qemu(vmid).agent.exec.post(
-                        command=[
-                            "powershell.exe",
-                            "-NonInteractive",
-                            "-ExecutionPolicy",
-                            "Bypass",
-                            "-Command",
-                            userdata,
-                        ]
+                    res = (
+                        self._prox.nodes(node)
+                        .qemu(vmid)
+                        .agent.exec.post(
+                            command=[
+                                "powershell.exe",
+                                "-NonInteractive",
+                                "-ExecutionPolicy",
+                                "Bypass",
+                                "-Command",
+                                userdata,
+                            ]
+                        )
                     )
                 else:
-                    self._prox.nodes(node).qemu(vmid).agent.exec.post(
-                        command=["/bin/bash", "-c", userdata]
+                    res = (
+                        self._prox.nodes(node)
+                        .qemu(vmid)
+                        .agent.exec.post(command=["/bin/bash", "-c", userdata])
                     )
+                logger.info(
+                    "Successfully executed userdata via QGA for VM %d, result: %s",
+                    vmid,
+                    res,
+                )
             except Exception as exc:
-                logger.warning("Failed to execute userdata via QGA: %s", exc)
+                logger.warning(
+                    "Failed to execute userdata via QGA for VM %d: %s", vmid, exc
+                )
 
+        logger.info("Successfully created QEMU VM %d (%s)", vmid, name)
         return Instance(
             provider_id=str(vmid),
             name=name,
@@ -539,6 +555,7 @@ class PVEClient:
             except Exception as exc:
                 logger.warning("Failed to execute userdata in LXC: %s", exc)
 
+        logger.info("Successfully created LXC container %d (%s)", vmid, name)
         return Instance(
             provider_id=str(vmid),
             name=name,

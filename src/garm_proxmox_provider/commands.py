@@ -65,6 +65,12 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
         _fatal(f"Invalid bootstrap JSON: {exc}")
 
     bootstrap = BootstrapInstance.from_dict(data)
+    logger.info(
+        "Creating instance: name=%s, os_type=%s, image=%s",
+        bootstrap.name,
+        bootstrap.os_type,
+        bootstrap.image,
+    )
     overrides = _apply_extra_specs(bootstrap, cfg)
 
     def factory(vid: str) -> str:
@@ -91,6 +97,7 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
             image=bootstrap.image,
         )
     except Exception as exc:
+        logger.exception("Failed to create instance %s", bootstrap.name)
         err_instance = Instance(
             provider_id="",
             name=bootstrap.name,
@@ -106,6 +113,7 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
 
 def delete_instance(config_path: str, instance_id: str) -> None:
     """DeleteInstance: stop and destroy VM; no-op if missing."""
+    logger.info("Deleting instance: %s", instance_id)
     cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
@@ -116,6 +124,7 @@ def delete_instance(config_path: str, instance_id: str) -> None:
 
 def get_instance(config_path: str, instance_id: str) -> None:
     """GetInstance: return current state of the VM as Instance JSON."""
+    logger.debug("Getting instance: %s", instance_id)
     cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
@@ -127,6 +136,7 @@ def get_instance(config_path: str, instance_id: str) -> None:
 
 def list_instances(config_path: str, pool_id: str) -> None:
     """ListInstances: return JSON array of Instance for the pool."""
+    logger.debug("Listing instances for pool: %s", pool_id)
     cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
@@ -138,6 +148,7 @@ def list_instances(config_path: str, pool_id: str) -> None:
 
 def remove_all_instances(config_path: str, controller_id: str) -> None:
     """RemoveAllInstances: delete all VMs belonging to this controller."""
+    logger.info("Removing all instances for controller: %s", controller_id)
     cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
@@ -148,6 +159,7 @@ def remove_all_instances(config_path: str, controller_id: str) -> None:
 
 def start(config_path: str, instance_id: str) -> None:
     """Start: power on VM."""
+    logger.info("Starting instance: %s", instance_id)
     cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
@@ -158,6 +170,7 @@ def start(config_path: str, instance_id: str) -> None:
 
 def stop(config_path: str, instance_id: str) -> None:
     """Stop: ACPI shutdown of VM."""
+    logger.info("Stopping instance: %s", instance_id)
     cfg = _get_config(config_path)
     client = PVEClient(cfg)
     try:
