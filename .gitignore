@@ -189,3 +189,4 @@ result-*
 
 # Provider config
 garm-provider-proxmox.toml
+config/

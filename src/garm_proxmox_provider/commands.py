@@ -64,6 +64,8 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
     except json.JSONDecodeError as exc:
         _fatal(f"Invalid bootstrap JSON: {exc}")
 
+    logger.info("Bootstrap JSON: %s", bootstrap_data)
+
     bootstrap = BootstrapInstance.from_dict(data)
     logger.info(
         "Creating instance: name=%s, os_type=%s, image=%s",

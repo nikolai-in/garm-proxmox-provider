@@ -434,6 +434,7 @@ class PVEClient:
             "description": garm_meta,
             "ipconfig0": "ip=dhcp",
             "net0": f"virtio,bridge={d.bridge}",
+            "agent": 1,
         }
         if os_type.lower() == "linux":
             config_update["ciuser"] = "runner"
