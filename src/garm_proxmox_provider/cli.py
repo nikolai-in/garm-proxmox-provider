@@ -34,8 +34,17 @@ def _setup_logging() -> None:
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
+@click.option(
+    "--config",
+    envvar="GARM_PROVIDER_CONFIG_FILE",
+    default="garm-provider-proxmox.toml",
+    help="Path to provider TOML config.",
+)
 @click.pass_context
-def cli(ctx: click.Context) -> None:
+def cli(ctx: click.Context, config: str) -> None:
+    ctx.ensure_object(dict)
+    ctx.obj['config'] = config
+
     """GARM external provider for Proxmox VE.
 
     Can be invoked with explicit subcommands or via the GARM_COMMAND
@@ -76,13 +85,10 @@ def cli(ctx: click.Context) -> None:
 
 
 @cli.command(name="create-instance")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
-def create_instance_cmd(config: str) -> None:
+
+@click.pass_context
+def create_instance_cmd(ctx: click.Context):
+    config = ctx.obj['config']
     """Create a new runner instance."""
     bootstrap_data = sys.stdin.read()
     if not bootstrap_data.strip():
@@ -92,121 +98,100 @@ def create_instance_cmd(config: str) -> None:
 
 
 @cli.command(name="delete-instance")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
+
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
     required=True,
     help="Instance ID to delete.",
 )
-def delete_instance_cmd(config: str, instance_id: str) -> None:
+@click.pass_context
+def delete_instance_cmd(ctx: click.Context, instance_id: str):
+    config = ctx.obj['config']
     """Delete a runner instance."""
     commands.delete_instance(config, instance_id)
 
 
 @cli.command(name="get-instance")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
+
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
     required=True,
     help="Instance ID to get.",
 )
-def get_instance_cmd(config: str, instance_id: str) -> None:
+@click.pass_context
+def get_instance_cmd(ctx: click.Context, instance_id: str):
+    config = ctx.obj['config']
     """Get details of a runner instance."""
     commands.get_instance(config, instance_id)
 
 
 @cli.command(name="list-instances")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
+
 @click.option(
     "--pool-id",
     envvar="GARM_POOL_ID",
     required=True,
     help="Pool ID to list instances for.",
 )
-def list_instances_cmd(config: str, pool_id: str) -> None:
+@click.pass_context
+def list_instances_cmd(ctx: click.Context, pool_id: str):
+    config = ctx.obj['config']
     """List all runner instances in a pool."""
     commands.list_instances(config, pool_id)
 
 
 @cli.command(name="remove-all-instances")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
+
 @click.option(
     "--controller-id",
     envvar="GARM_CONTROLLER_ID",
     required=True,
     help="Controller ID to remove instances for.",
 )
-def remove_all_instances_cmd(config: str, controller_id: str) -> None:
+@click.pass_context
+def remove_all_instances_cmd(ctx: click.Context, controller_id: str):
+    config = ctx.obj['config']
     """Remove all runner instances for a controller."""
     commands.remove_all_instances(config, controller_id)
 
 
 @cli.command(name="start")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
+
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
     required=True,
     help="Instance ID to start.",
 )
-def start_cmd(config: str, instance_id: str) -> None:
+@click.pass_context
+def start_cmd(ctx: click.Context, instance_id: str):
+    config = ctx.obj['config']
     """Start a runner instance."""
     commands.start(config, instance_id)
 
 
 @cli.command(name="stop")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
+
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
     required=True,
     help="Instance ID to stop.",
 )
-def stop_cmd(config: str, instance_id: str) -> None:
+@click.pass_context
+def stop_cmd(ctx: click.Context, instance_id: str):
+    config = ctx.obj['config']
     """Stop a runner instance."""
     commands.stop(config, instance_id)
 
 
 @cli.command(name="test-connection")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
-def test_connection_cmd(config: str) -> None:
+
+@click.pass_context
+def test_connection_cmd(ctx: click.Context):
+    config = ctx.obj['config']
     """Test connection to the Proxmox VE API."""
     from .client import PVEClient
     from .config import load_config
@@ -224,13 +209,10 @@ def test_connection_cmd(config: str) -> None:
 
 
 @cli.command(name="list-templates")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
-def list_templates_cmd(config: str) -> None:
+
+@click.pass_context
+def list_templates_cmd(ctx: click.Context):
+    config = ctx.obj['config']
     """List all available templates (QEMU and LXC)."""
     from .client import PVEClient
     from .config import load_config
@@ -258,13 +240,10 @@ def list_templates_cmd(config: str) -> None:
 
 
 @cli.command(name="lint-config")
-@click.option(
-    "--config",
-    envvar="GARM_PROVIDER_CONFIG_FILE",
-    required=True,
-    help="Path to provider TOML config.",
-)
-def lint_config_cmd(config: str) -> None:
+
+@click.pass_context
+def lint_config_cmd(ctx: click.Context):
+    config = ctx.obj['config']
     """Validate the provider configuration file."""
     from .setup import lint_config
 

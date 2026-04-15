@@ -55,24 +55,25 @@ token_name = "garm"
 token_value = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 verify_ssl = true
 
-[defaults]
+[cluster]
 node = "pve-node1"           # Target Proxmox node
 pool = "garm"                # Resource pool to place runners into
 storage = "local-lvm"        # Storage for clone disks
-instance_type = "lxc"        # "vm" for QEMU, "lxc" for containers
-lxc_unprivileged = true      # Recommended for LXC
+
+[flavors.default]
 cores = 4
 memory_mb = 4096
 disk_gb = 20
 
-# Optional: Global fallback template VMID
-# template_vmid = 9000
+# Map GARM image names to Proxmox templates
+[images.ubuntu-slim-runner]
+template = 9100
+type = "lxc"                 # "vm" for QEMU, "lxc" for containers
+lxc_unprivileged = true      # Recommended for LXC
 
-# Recommended: Route requests to specific templates based on OS and Arch
-[defaults.pool_templates]
-"linux/amd64" = 9100
-"linux/arm64" = 9101
-"windows/amd64" = 9200
+[images.windows-runner]
+template = 9200
+type = "vm"
 ```
 
 ## CLI Utilities

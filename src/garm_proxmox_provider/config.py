@@ -38,7 +38,6 @@ class FlavorConfig:
 
 @dataclass
 class ImageConfig:
-    template: str | int  # Can be a Proxmox VMID (e.g. 9000) or Template Name
     type: str = "vm"  # "vm" or "lxc"
     lxc_unprivileged: bool = True
 
@@ -131,15 +130,13 @@ def load_config(path: str) -> Config:
     for key, val in images_data.items():
         if not isinstance(val, dict):
             raise ConfigError(f"[images].{key} must be a dictionary")
-        if "template" not in val:
-            raise ConfigError(f"[images].{key} is missing required 'template' field")
+
 
         type_val = str(val.get("type", "vm"))
         if type_val not in ("vm", "lxc"):
             raise ConfigError(f"[images].{key}.type must be 'vm' or 'lxc'")
 
         images[key] = ImageConfig(
-            template=val["template"],
             type=type_val,
             lxc_unprivileged=bool(val.get("lxc_unprivileged", True)),
         )

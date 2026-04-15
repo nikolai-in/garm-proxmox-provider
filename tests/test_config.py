@@ -22,7 +22,6 @@ storage = "local-lvm"
 bridge = "vmbr0"
 
 [images.default]
-template = 9000
 
 [flavors.default]
 cores = 2
@@ -47,7 +46,6 @@ pool = "garm-pool"
 ssh_public_key = "ssh-ed25519 AAAA test@example.com"
 
 [images.default]
-template = 9000
 
 [flavors.default]
 cores = 2
@@ -73,7 +71,6 @@ def test_load_minimal_config(tmp_path: Path) -> None:
     assert cfg.pve.verify_ssl is False
     assert cfg.cluster.node == "pve1"
     assert cfg.cluster.storage == "local-lvm"
-    assert cfg.images["default"].template == 9000
     assert cfg.flavors["default"].cores == 2
     assert cfg.flavors["default"].memory_mb == 4096
     assert cfg.flavors["default"].disk_gb == 20
@@ -159,33 +156,10 @@ token_value = "aaaa"
 node = "pve1"
 
 [images.default]
-template = 9000
 
 [images.win]
-template = 9002
 """
     cfg = load_config(_write_config(tmp_path, toml))
-    assert cfg.images["default"].template == 9000
-    assert cfg.images["win"].template == 9002
-
-
-def test_missing_image_template_raises(tmp_path: Path) -> None:
-    """An image config missing a template field should raise."""
-    toml = """\
-[pve]
-host = "https://pve.example.com:8006"
-user = "root@pam"
-token_name = "garm"
-token_value = "aaaa"
-
-[cluster]
-node = "pve1"
-
-[images.broken]
-type = "vm"
-"""
-    with pytest.raises(ConfigError, match="missing required 'template'"):
-        load_config(_write_config(tmp_path, toml))
 
 
 def test_invalid_image_type_raises(tmp_path: Path) -> None:
@@ -200,7 +174,6 @@ token_value = "aaaa"
 node = "pve1"
 
 [images.broken]
-template = 9000
 type = "docker"
 """
     with pytest.raises(ConfigError, match="must be 'vm' or 'lxc'"):
@@ -230,7 +203,6 @@ token_value = "aaaa"
 node = "pve1"
 
 [images.default]
-template = 9000
 type = "lxc"
 lxc_unprivileged = false
 """
