@@ -66,7 +66,13 @@ def cli(ctx: click.Context) -> None:
 
     subcommand = cli.commands.get(subcommand_name)
     if subcommand:
-        ctx.invoke(subcommand)
+        kwargs = {}
+        for param in subcommand.params:
+            if param.name and getattr(param, "envvar", None):
+                val = os.environ.get(param.envvar)
+                if val is not None:
+                    kwargs[param.name] = val
+        ctx.invoke(subcommand, **kwargs)
 
 
 @cli.command(name="create-instance")
