@@ -440,11 +440,12 @@ class PVEClient:
 
             config_update["sshkeys"] = quote(d.ssh_public_key.strip(), safe="")
 
-        if d.snippets_storage:
+        snippets_storage = d.snippets_storage or "local"
+        if userdata:
             snippet_name = f"garm-{vmid}.yml"
             userdata_bytes = userdata.encode("utf-8")
             try:
-                self._prox.nodes(node).storage(d.snippets_storage).upload.post(
+                self._prox.nodes(node).storage(snippets_storage).upload.post(
                     content="snippets",
                     filename=snippet_name,
                     file=io.BytesIO(userdata_bytes),
@@ -453,7 +454,7 @@ class PVEClient:
                 logger.warning("Failed to upload cloud-init snippet: %s", exc)
             else:
                 config_update["cicustom"] = (
-                    f"user={d.snippets_storage}:snippets/{snippet_name}"
+                    f"user={snippets_storage}:snippets/{snippet_name}"
                 )
 
         self._prox.nodes(node).qemu(vmid).config.post(**config_update)
