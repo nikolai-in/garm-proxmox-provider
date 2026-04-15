@@ -25,5 +25,7 @@ db_file = "/etc/garm/garm.db"
 name = "proxmox"
 description = "Proxmox VE External Provider"
 provider_type = "external"
+[provider.external]
 # This points to the symlink we created in the Dockerfile
 provider_executable = "/opt/garm/providers.d/garm-proxmox-provider"
+config_file = "/etc/garm/garm-provider-proxmox.toml"
