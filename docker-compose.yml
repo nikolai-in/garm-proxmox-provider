@@ -9,7 +9,11 @@ services:
     volumes:
       - ./config/garm-config.toml:/etc/garm/config.toml
       - ./config/garm-provider-proxmox.toml:/etc/garm/garm-provider-proxmox.toml
+      - garm-data:/etc/garm
     environment:
       # Pass the config to the bundled provider so it knows where to look
       - GARM_PROVIDER_CONFIG_FILE=/etc/garm/garm-provider-proxmox.toml
     command: ["garm", "-config", "/etc/garm/config.toml"]
+
+volumes:
+  garm-data:
