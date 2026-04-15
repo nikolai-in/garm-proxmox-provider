@@ -433,6 +433,7 @@ class PVEClient:
             "memory": memory_mb,
             "description": garm_meta,
             "ipconfig0": "ip=dhcp",
+            "net0": f"virtio,bridge={d.bridge}",
         }
         if os_type.lower() == "linux":
             config_update["ciuser"] = "runner"
