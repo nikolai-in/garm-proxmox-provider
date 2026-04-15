@@ -15,6 +15,7 @@ time_to_live = "8760h"
 
 [database]
 backend = "sqlite3"
+passphrase = "local-dev-db-passphrase-32-chars"
 
 [database.sqlite3]
 # Mounts to the volume mapped in docker-compose.yml
