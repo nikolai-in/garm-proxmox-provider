@@ -430,6 +430,7 @@ class PVEClient:
             "cores": cores,
             "memory": memory_mb,
             "description": garm_meta,
+            "ipconfig0": "ip=dhcp",
         }
         if d.ssh_public_key:
             from urllib.parse import quote
@@ -502,6 +503,7 @@ class PVEClient:
             "cores": cores,
             "memory": memory_mb,
             "description": garm_meta,
+            "net0": f"name=eth0,bridge={d.bridge},ip=dhcp",
             "unprivileged": int(lxc_unprivileged),
         }
 
