@@ -26,7 +26,6 @@ storage = "local-lvm"
 bridge = "vmbr0"
 
 [images.default]
-template = 9000
 
 [flavors.default]
 cores = 2

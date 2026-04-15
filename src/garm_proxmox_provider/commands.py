@@ -72,7 +72,8 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
         bootstrap=bootstrap,
         provider_id="PLACEHOLDER",
     )
-    userdata = render_userdata(
+    # Use the userdata provided by GARM in the payload. If empty, fallback to generated.
+    userdata = bootstrap.userdata or render_userdata(
         bootstrap=bootstrap,
         provider_id="PLACEHOLDER",  # real VMID not known yet
         defaults=cfg.cluster,
@@ -97,7 +98,7 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
         # Re-render user-data with real provider_id for the snippet (QEMU only)
         image_cfg = cfg.get_image(bootstrap.image)
         if cfg.cluster.snippets_storage and image_cfg.type != "lxc":
-            userdata_final = render_userdata(
+            userdata_final = bootstrap.userdata or render_userdata(
                 bootstrap=bootstrap,
                 provider_id=instance.provider_id,
                 defaults=cfg.cluster,

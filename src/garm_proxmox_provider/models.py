@@ -83,6 +83,7 @@ class BootstrapInstance:
     flavor: str = ""
     image: str = ""
     labels: list[str] = field(default_factory=list)
+    userdata: str = ""
     pool_params: dict[str, Any] = field(default_factory=dict)
     extra_specs: dict[str, Any] = field(default_factory=dict)
 
@@ -118,6 +119,7 @@ class BootstrapInstance:
             flavor=data.get("flavor", ""),
             image=data.get("image", ""),
             labels=data.get("labels", []),
+            userdata=data.get("userdata", ""),
             pool_params=data.get("pool_params", {}),
             extra_specs=extra_specs_raw,
         )

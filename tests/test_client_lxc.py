@@ -55,7 +55,6 @@ def _make_config(instance_type: str = "lxc", **kwargs: Any) -> Config:
     }
     images = {
         "default": ImageConfig(
-            template=kwargs.get("template_vmid", 9100),
             type=instance_type,
             lxc_unprivileged=kwargs.get("lxc_unprivileged", True),
         )
@@ -207,7 +206,7 @@ def test_get_instance_lxc_not_found() -> None:
 def test_create_instance_lxc_clones_lxc_template() -> None:
     client, mock_prox = _make_client()
     mock_prox.cluster.resources.get.return_value = [
-        {"vmid": 9100, "node": "pve1", "type": "lxc"}
+        {"vmid": 9100, "node": "pve1", "type": "lxc", "name": "default"}
     ]
 
     mock_prox.cluster.nextid.get.return_value = 201
@@ -262,7 +261,7 @@ def test_create_instance_lxc_clones_lxc_template() -> None:
 def test_create_instance_lxc_env_vars_injected() -> None:
     client, mock_prox = _make_client()
     mock_prox.cluster.resources.get.return_value = [
-        {"vmid": 9100, "node": "pve1", "type": "lxc"}
+        {"vmid": 9100, "node": "pve1", "type": "lxc", "name": "default"}
     ]
 
     mock_prox.cluster.nextid.get.return_value = 202
@@ -319,7 +318,7 @@ def test_create_instance_lxc_env_vars_injected() -> None:
 def test_create_instance_lxc_privileged_container() -> None:
     client, mock_prox = _make_client(lxc_unprivileged=False)
     mock_prox.cluster.resources.get.return_value = [
-        {"vmid": 9100, "node": "pve1", "type": "lxc"}
+        {"vmid": 9100, "node": "pve1", "type": "lxc", "name": "default"}
     ]
 
     mock_prox.cluster.nextid.get.return_value = 203

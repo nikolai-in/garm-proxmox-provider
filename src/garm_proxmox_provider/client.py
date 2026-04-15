@@ -151,7 +151,24 @@ class PVEClient:
         return self._prox.nodes(node).qemu(vmid).config.get() or {}
 
     def _get_ips(self, node: str, vmid: int) -> list[Address]:
-        """Try to fetch IPs via QEMU guest agent; return empty list on failure."""
+        """Try to fetch IPs via QEMU guest agent and fallback to config."""
+        addresses: list[Address] = []
+        try:
+            config = self._vm_config(node, vmid)
+            for k, v in config.items():
+                if k.startswith("ipconfig") or k.startswith("net"):
+                    if not isinstance(v, str):
+                        continue
+                    m4 = re.search(r'ip=([0-9\.]+)(?:/[0-9]+)?', v)
+                    if m4 and m4.group(1) != "dhcp":
+                        addresses.append(Address(address=m4.group(1), type="ipv4"))
+                    m6 = re.search(r'ip6=([a-fA-F0-9:]+)(?:/[0-9]+)?', v)
+                    if m6 and m6.group(1) not in ("dhcp", "auto"):
+                        addresses.append(Address(address=m6.group(1), type="ipv6"))
+        except Exception:
+            pass
+        if addresses:
+            return addresses
         try:
             result = (
                 self._prox.nodes(node).qemu(vmid).agent.get("network-get-interfaces")
@@ -179,7 +196,24 @@ class PVEClient:
         return self._vm_config(node, vmid)
 
     def _lxc_get_ips(self, node: str, vmid: int) -> list[Address]:
-        """Fetch IPs from an LXC container's network interfaces."""
+        """Fetch IPs from an LXC container's network interfaces and config."""
+        addresses: list[Address] = []
+        try:
+            config = self._lxc_config(node, vmid)
+            for k, v in config.items():
+                if k.startswith("net"):
+                    if not isinstance(v, str):
+                        continue
+                    m4 = re.search(r'ip=([0-9\.]+)(?:/[0-9]+)?', v)
+                    if m4 and m4.group(1) != "dhcp":
+                        addresses.append(Address(address=m4.group(1), type="ipv4"))
+                    m6 = re.search(r'ip6=([a-fA-F0-9:]+)(?:/[0-9]+)?', v)
+                    if m6 and m6.group(1) not in ("dhcp", "auto"):
+                        addresses.append(Address(address=m6.group(1), type="ipv6"))
+        except Exception:
+            pass
+        if addresses:
+            return addresses
         try:
             result = self._prox.nodes(node).lxc(vmid).interfaces.get() or []
             addresses: list[Address] = []
@@ -303,7 +337,7 @@ class PVEClient:
             cores = cores or def_flavor.cores
             memory_mb = memory_mb or def_flavor.memory_mb
 
-        tmpl_vmid = image_cfg.template
+        tmpl_vmid = image
         garm_meta = _build_garm_meta(controller_id, pool_id, name, os_type, os_arch)
 
         found_tmpl = self._find_instance(tmpl_vmid)
@@ -322,6 +356,7 @@ class PVEClient:
                         name=name,
                         pool_id=pool_id,
                         garm_meta=garm_meta,
+                        userdata=userdata,
                         os_type=os_type,
                         os_arch=os_arch,
                         cores=cores,
@@ -417,7 +452,15 @@ class PVEClient:
 
         logger.info("Starting QEMU VM %d", vmid)
         upid = self._prox.nodes(node).qemu(vmid).status.start.post()
-        self._wait_task(node, upid)
+        if userdata:
+            logger.info("Executing userdata script in LXC %d", vmid)
+            # Use Proxmox API exec to run the script
+            try:
+                self._prox.nodes(node).lxc(vmid).exec.post(
+                    command=["/bin/bash", "-c", userdata]
+                )
+            except Exception as exc:
+                logger.warning("Failed to execute userdata in LXC: %s", exc)
 
         return Instance(
             provider_id=str(vmid),
@@ -436,6 +479,7 @@ class PVEClient:
         name: str,
         pool_id: str,
         garm_meta: str,
+        userdata: str,
         os_type: str,
         os_arch: str,
         cores: int,
@@ -478,7 +522,15 @@ class PVEClient:
 
         logger.info("Starting LXC container %d", vmid)
         upid = self._prox.nodes(node).lxc(vmid).status.start.post()
-        self._wait_task(node, upid)
+        if userdata:
+            logger.info("Executing userdata script in LXC %d", vmid)
+            # Use Proxmox API exec to run the script
+            try:
+                self._prox.nodes(node).lxc(vmid).exec.post(
+                    command=["/bin/bash", "-c", userdata]
+                )
+            except Exception as exc:
+                logger.warning("Failed to execute userdata in LXC: %s", exc)
 
         return Instance(
             provider_id=str(vmid),
