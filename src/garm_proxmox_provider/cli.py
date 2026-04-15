@@ -43,7 +43,7 @@ def _setup_logging() -> None:
 @click.pass_context
 def cli(ctx: click.Context, config: str) -> None:
     ctx.ensure_object(dict)
-    ctx.obj['config'] = config
+    ctx.obj["config"] = config
 
     """GARM external provider for Proxmox VE.
 
@@ -79,9 +79,9 @@ def cli(ctx: click.Context, config: str) -> None:
         for param in subcommand.params:
             if param.name and getattr(param, "envvar", None):
                 envvar = param.envvar
-                if isinstance(envvar, list):
+                if isinstance(envvar, (list, tuple)):
                     envvar = envvar[0]
-                if envvar:
+                if envvar and isinstance(envvar, str):
                     val = os.environ.get(envvar)
                     if val is not None:
                         kwargs[param.name] = val
@@ -89,10 +89,9 @@ def cli(ctx: click.Context, config: str) -> None:
 
 
 @cli.command(name="create-instance")
-
 @click.pass_context
 def create_instance_cmd(ctx: click.Context):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Create a new runner instance."""
     bootstrap_data = sys.stdin.read()
     if not bootstrap_data.strip():
@@ -102,7 +101,6 @@ def create_instance_cmd(ctx: click.Context):
 
 
 @cli.command(name="delete-instance")
-
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
@@ -111,13 +109,12 @@ def create_instance_cmd(ctx: click.Context):
 )
 @click.pass_context
 def delete_instance_cmd(ctx: click.Context, instance_id: str):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Delete a runner instance."""
     commands.delete_instance(config, instance_id)
 
 
 @cli.command(name="get-instance")
-
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
@@ -126,13 +123,12 @@ def delete_instance_cmd(ctx: click.Context, instance_id: str):
 )
 @click.pass_context
 def get_instance_cmd(ctx: click.Context, instance_id: str):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Get details of a runner instance."""
     commands.get_instance(config, instance_id)
 
 
 @cli.command(name="list-instances")
-
 @click.option(
     "--pool-id",
     envvar="GARM_POOL_ID",
@@ -141,13 +137,12 @@ def get_instance_cmd(ctx: click.Context, instance_id: str):
 )
 @click.pass_context
 def list_instances_cmd(ctx: click.Context, pool_id: str):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """List all runner instances in a pool."""
     commands.list_instances(config, pool_id)
 
 
 @cli.command(name="remove-all-instances")
-
 @click.option(
     "--controller-id",
     envvar="GARM_CONTROLLER_ID",
@@ -156,13 +151,12 @@ def list_instances_cmd(ctx: click.Context, pool_id: str):
 )
 @click.pass_context
 def remove_all_instances_cmd(ctx: click.Context, controller_id: str):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Remove all runner instances for a controller."""
     commands.remove_all_instances(config, controller_id)
 
 
 @cli.command(name="start")
-
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
@@ -171,13 +165,12 @@ def remove_all_instances_cmd(ctx: click.Context, controller_id: str):
 )
 @click.pass_context
 def start_cmd(ctx: click.Context, instance_id: str):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Start a runner instance."""
     commands.start(config, instance_id)
 
 
 @cli.command(name="stop")
-
 @click.option(
     "--instance-id",
     envvar="GARM_INSTANCE_ID",
@@ -186,16 +179,15 @@ def start_cmd(ctx: click.Context, instance_id: str):
 )
 @click.pass_context
 def stop_cmd(ctx: click.Context, instance_id: str):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Stop a runner instance."""
     commands.stop(config, instance_id)
 
 
 @cli.command(name="test-connection")
-
 @click.pass_context
 def test_connection_cmd(ctx: click.Context):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Test connection to the Proxmox VE API."""
     from .client import PVEClient
     from .config import load_config
@@ -213,10 +205,9 @@ def test_connection_cmd(ctx: click.Context):
 
 
 @cli.command(name="list-templates")
-
 @click.pass_context
 def list_templates_cmd(ctx: click.Context):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """List all available templates (QEMU and LXC)."""
     from .client import PVEClient
     from .config import load_config
@@ -244,10 +235,9 @@ def list_templates_cmd(ctx: click.Context):
 
 
 @cli.command(name="lint-config")
-
 @click.pass_context
 def lint_config_cmd(ctx: click.Context):
-    config = ctx.obj['config']
+    config = ctx.obj["config"]
     """Validate the provider configuration file."""
     from .setup import lint_config
 

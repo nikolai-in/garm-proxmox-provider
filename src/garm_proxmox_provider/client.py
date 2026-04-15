@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import logging
+import re
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any
@@ -160,10 +160,10 @@ class PVEClient:
                 if k.startswith("ipconfig") or k.startswith("net"):
                     if not isinstance(v, str):
                         continue
-                    m4 = re.search(r'ip=([0-9\.]+)(?:/[0-9]+)?', v)
+                    m4 = re.search(r"ip=([0-9\.]+)(?:/[0-9]+)?", v)
                     if m4 and m4.group(1) != "dhcp":
                         addresses.append(Address(address=m4.group(1), type="ipv4"))
-                    m6 = re.search(r'ip6=([a-fA-F0-9:]+)(?:/[0-9]+)?', v)
+                    m6 = re.search(r"ip6=([a-fA-F0-9:]+)(?:/[0-9]+)?", v)
                     if m6 and m6.group(1) not in ("dhcp", "auto"):
                         addresses.append(Address(address=m6.group(1), type="ipv6"))
         except Exception:
@@ -174,7 +174,7 @@ class PVEClient:
             result = (
                 self._prox.nodes(node).qemu(vmid).agent.get("network-get-interfaces")
             )
-            addresses: list[Address] = []
+            addresses = []
             if result:
                 for iface in result.get("result", []):
                     if iface.get("name") == "lo":
@@ -205,10 +205,10 @@ class PVEClient:
                 if k.startswith("net"):
                     if not isinstance(v, str):
                         continue
-                    m4 = re.search(r'ip=([0-9\.]+)(?:/[0-9]+)?', v)
+                    m4 = re.search(r"ip=([0-9\.]+)(?:/[0-9]+)?", v)
                     if m4 and m4.group(1) != "dhcp":
                         addresses.append(Address(address=m4.group(1), type="ipv4"))
-                    m6 = re.search(r'ip6=([a-fA-F0-9:]+)(?:/[0-9]+)?', v)
+                    m6 = re.search(r"ip6=([a-fA-F0-9:]+)(?:/[0-9]+)?", v)
                     if m6 and m6.group(1) not in ("dhcp", "auto"):
                         addresses.append(Address(address=m6.group(1), type="ipv6"))
         except Exception:
@@ -217,7 +217,7 @@ class PVEClient:
             return addresses
         try:
             result = self._prox.nodes(node).lxc(vmid).interfaces.get() or []
-            addresses: list[Address] = []
+            addresses = []
             if result:
                 for iface in result:
                     if iface.get("name") == "lo":
