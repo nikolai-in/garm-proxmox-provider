@@ -6,9 +6,7 @@ use `PVEClient` (a thin proxmoxer wrapper) to interact with the Proxmox VE API.
 
 ## Component diagram
 
-```{eval-rst}
-.. mermaid::
-
+```{mermaid}
    graph TB
      CLI["CLI (click)<br>cli.py"] --> Commands["Command handlers<br>commands.py"]
      Commands --> Client["PVEClient<br>client.py"]
@@ -19,9 +17,7 @@ use `PVEClient` (a thin proxmoxer wrapper) to interact with the Proxmox VE API.
 
 ## Bootstrap execution flow (QEMU)
 
-```{eval-rst}
-.. mermaid::
-
+```{mermaid}
    sequenceDiagram
      participant GARM
      participant CLI
@@ -50,7 +46,7 @@ When `cluster.qm_ssh_fallback = true` is set in the provider config **and** the
 QEMU Guest Agent fails to respond (or `agent.exec` raises), the provider falls back
 to executing the bootstrap script through the Proxmox host via SSH:
 
-```text
+```sh
 ssh [-i identity_file] <qm_ssh_user>@<pve_host> qm guest exec <vmid> -- /bin/bash -c '<userdata>'
 ```
 

@@ -1,0 +1,40 @@
+version: 1
+project:
+  title: garm-proxmox-provider Documentation
+
+# Explicit project Table of Contents used to populate the site sidebar/navigation
+
+  toc:
+    - pattern: "*.md"
+
+# Optional project-wide settings (controls MyST parsing behavior and output handling)
+
+  settings:
+    # Parser-related toggles. Disable dollar-math by default to avoid accidental $...$ parsing
+    # in non-math content (adjust if you need inline dollar math).
+    parser:
+      dollarmath: false
+
+    # Control how code/notebook stdout/stderr are treated when producing site exports.
+    # Keep stdout visible by default; suppress noisy stderr but log a warning.
+    output_stdout: show
+
+# Project-level build checks and link rules you may want to adjust for CI
+
+# Example: ignore certain flaky external links (add URLs or patterns as needed)
+
+# error_rules
+
+# - rule: link-resolves
+
+# severity: ignore
+
+# keys
+
+# - '<https://example.com/>**'
+
+# Files / patterns to exclude from TOC discovery (optional)
+
+# exclude
+
+# - drafts/**

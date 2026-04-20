@@ -14,6 +14,7 @@ dependencies = [
     "proxmoxer>=2.3.0",
     "requests>=2.33.1",
     "requests-toolbelt>=1.0.0",
+    "sphinx-design>=0.7.0",
 ]
 
 [project.scripts]
@@ -30,10 +31,7 @@ dev = [
     "pytest>=9.0.3",
     "sphinx>=9.1.0",
     "sphinx-autobuild>=2025.8.25",
-    "sphinx-copybutton>=0.5.2",
-    "sphinx-inline-tabs>=2025.12.21.14",
     "sphinxcontrib-mermaid>=2.0.1",
-    "sphinxext-opengraph[social-cards]>=0.13.0",
 ]
 
 [tool.pytest.ini_options]
