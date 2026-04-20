@@ -155,3 +155,98 @@ odel. When GARM invokes the binary without CLI arguments, the provider will seam
 - **Testing:** `uv run pytest`
 
 All core logic is decoupled from environment variables, making it highly testable and extensible.
+
+## Logging
+
+The provider logs to **stderr** by default (safe for Docker). Log behaviour is controlled entirely
+through environment variables so no config-file changes are needed.
+
+| Variable | Default | Description |
+|---|---|---|
+| `GARM_LOG_LEVEL` | `WARNING` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `GARM_DEBUG` | _(unset)_ | Legacy flag — if set (any value) and `GARM_LOG_LEVEL` is absent, maps to `DEBUG` |
+| `GARM_LOG_FILE` | _(unset)_ | Full path for a rotating log file (10 MB × 5 backups). Directory is created automatically. |
+| `GARM_LOG_JSON` | _(unset)_ | Set to `1`, `true`, or `yes` to emit JSON-formatted log lines (requires `python-json-logger`). Falls back to text if unavailable. |
+
+**Docker recommendation** — rely on container stdout/stderr for log capture. Only set
+`GARM_LOG_FILE` when you mount a host directory for persistent logs:
+
+```bash
+# Debug in a container (logs go to stderr / Docker log driver):
+docker run -e GARM_LOG_LEVEL=DEBUG ...
+
+# Persist logs to a mounted host path:
+docker run -e GARM_LOG_FILE=/var/log/garm/provider.log \
+           -v /host/logs:/var/log/garm ...
+```
+
+## QGA SSH Fallback (opt-in)
+
+By default the provider executes the bootstrap script inside QEMU VMs via the
+**QEMU Guest Agent** (`agent.exec`). When the guest agent is unavailable you can
+enable an opt-in fallback that runs `qm guest exec` on the Proxmox host over SSH.
+
+Add these optional keys to your `[cluster]` section:
+
+```toml
+[cluster]
+# ... existing keys ...
+
+# Optional: fall back to qm guest exec over SSH when QGA fails
+qm_ssh_fallback      = true         # default: false
+qm_ssh_user          = "root"       # default: "root"
+qm_ssh_identity_file = "/home/garm/.ssh/id_ed25519"  # optional
+```
+
+> **Security note** — See the [Security](#security) section below before enabling this.
+
+## Testing
+
+Run the standard unit tests:
+
+```bash
+pytest
+```
+
+Run the local end-to-end tests (hermetic — no network required):
+
+```bash
+pytest -m local
+```
+
+Run a single test:
+
+```bash
+pytest tests/test_e2e_local.py::test_create_instance_qemu_executes_userdata_via_qga -v
+```
+
+## Documentation
+
+Build the HTML docs locally:
+
+```bash
+pip install -r docs/requirements.txt
+sphinx-build -b html docs docs/_build/html
+```
+
+Then open `docs/_build/html/index.html`.  The docs use the
+[furo](https://github.com/pradyunsg/furo) theme and include Mermaid architecture
+diagrams.
+
+## Security
+
+### `qm_ssh_fallback`
+
+Enabling `qm_ssh_fallback = true` grants the provider SSH access to your Proxmox
+host with enough privilege to run `qm`. This carries the following implications:
+
+- The SSH key must have access to a user that can execute `qm` on the Proxmox node.
+  Running as `root@pam` is the simplest option but also the broadest privilege level.
+- Keep the private key file readable only by the service account running the provider
+  (`chmod 600`).
+- Anyone who gains access to the key can execute arbitrary commands as the configured
+  SSH user on the Proxmox host.
+- Consider restricting the key to `command="qm guest exec ..."` in
+  `~/.ssh/authorized_keys` on the Proxmox node to limit blast radius.
+- This fallback is entirely **opt-in** and disabled by default.
+
