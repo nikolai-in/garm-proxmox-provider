@@ -30,3 +30,6 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "local: local-only end-to-end tests (require no network); run with -m local",
+]
