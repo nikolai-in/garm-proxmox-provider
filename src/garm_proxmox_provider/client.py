@@ -459,6 +459,12 @@ class PVEClient:
         if userdata:
             self._run_userdata_qemu(node, vmid, userdata, os_type)
 
+        # Try to collect IP addresses immediately so GARM sees them without waiting
+        try:
+            addresses = self._get_ips_for(node, vmid, "qemu")
+        except Exception:
+            addresses = []
+
         logger.info("Successfully created QEMU VM %d (%s)", vmid, name)
         return Instance(
             provider_id=str(vmid),
@@ -467,6 +473,7 @@ class PVEClient:
             os_arch=os_arch,
             status=InstanceStatus.RUNNING,
             pool_id=pool_id,
+            addresses=addresses,
         )
 
     def _create_lxc(
@@ -523,6 +530,12 @@ class PVEClient:
             except Exception as exc:
                 logger.warning("Failed to execute userdata in LXC: %s", exc)
 
+        # Try to collect IP addresses immediately so GARM sees them without waiting
+        try:
+            addresses = self._get_ips_for(node, vmid, "lxc")
+        except Exception:
+            addresses = []
+
         logger.info("Successfully created LXC container %d (%s)", vmid, name)
         return Instance(
             provider_id=str(vmid),
@@ -531,6 +544,7 @@ class PVEClient:
             os_arch=os_arch,
             status=InstanceStatus.RUNNING,
             pool_id=pool_id,
+            addresses=addresses,
         )
 
     def _wait_for_qga(self, node: str, vmid: int) -> bool:
@@ -592,7 +606,9 @@ class PVEClient:
         ]
         logger.info("qm SSH fallback: executing userdata for VM %d via SSH", vmid)
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=_QM_SSH_TIMEOUT)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=_QM_SSH_TIMEOUT
+            )
             logger.info(
                 "qm SSH fallback result for VM %d: rc=%d stdout=%r stderr=%r",
                 vmid,

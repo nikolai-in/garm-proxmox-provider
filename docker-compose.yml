@@ -9,10 +9,13 @@ services:
     volumes:
       - ./config/garm-config.toml:/etc/garm/config.toml
       - ./config/garm-provider-proxmox.toml:/etc/garm/garm-provider-proxmox.toml
+      - ./config/logs:/var/log/garm
       - garm-data:/etc/garm
     environment:
       # Pass the config to the bundled provider so it knows where to look
       - GARM_PROVIDER_CONFIG_FILE=/etc/garm/garm-provider-proxmox.toml
+      - GARM_LOG_LEVEL=DEBUG
+      - GARM_LOG_FILE=/var/log/garm/provider.log
     command: ["garm", "-config", "/etc/garm/config.toml"]
 
 volumes:

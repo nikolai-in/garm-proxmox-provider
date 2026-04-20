@@ -57,20 +57,51 @@ def _setup_logging() -> None:
         formatter = logging.Formatter(fmt)
 
     root = logging.getLogger()
-    if not root.handlers:
+
+    # Ensure a StreamHandler to stderr exists (don't rely on root.handlers being empty)
+    has_stderr = False
+    for h in root.handlers:
+        if isinstance(h, logging.StreamHandler):
+            # Some StreamHandlers may target stdout; only treat sys.stderr as the provider stream
+            if getattr(h, "stream", None) is sys.stderr:
+                has_stderr = True
+                break
+
+    if not has_stderr:
         sh = logging.StreamHandler(sys.stderr)
         sh.setFormatter(formatter)
         root.addHandler(sh)
 
-        log_file = os.environ.get("GARM_LOG_FILE")
-        if log_file:
+    # Always add a rotating file handler when requested, but avoid duplicating handlers
+    log_file = os.environ.get("GARM_LOG_FILE")
+    if log_file:
+        try:
+            dirname = os.path.dirname(log_file)
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
+        except Exception:
+            # Best-effort directory creation; if it fails, continue without raising
+            pass
+
+        # Check existing handlers for one already writing to the same file (avoid duplicates)
+        abs_log_file = os.path.abspath(log_file)
+        existing_file = False
+        for h in root.handlers:
             try:
-                dirname = os.path.dirname(log_file)
-                if dirname:
-                    os.makedirs(dirname, exist_ok=True)
+                base = getattr(h, "baseFilename", None)
+                if base and os.path.abspath(base) == abs_log_file:
+                    existing_file = True
+                    break
             except Exception:
-                pass
-            fh = RotatingFileHandler(log_file, maxBytes=_LOG_FILE_MAX_BYTES, backupCount=_LOG_FILE_BACKUP_COUNT)
+                # Some handlers may not have baseFilename; ignore them
+                continue
+
+        if not existing_file:
+            fh = RotatingFileHandler(
+                log_file,
+                maxBytes=_LOG_FILE_MAX_BYTES,
+                backupCount=_LOG_FILE_BACKUP_COUNT,
+            )
             fh.setFormatter(formatter)
             root.addHandler(fh)
 
