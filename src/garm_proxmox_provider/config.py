@@ -27,6 +27,10 @@ class ClusterConfig:
     bridge: str = "vmbr0"
     snippets_storage: str | None = None
     ssh_public_key: str | None = None
+    # Optional QGA SSH fallback for bootstrap execution
+    qm_ssh_fallback: bool = False
+    qm_ssh_user: str = "root"
+    qm_ssh_identity_file: str | None = None
 
 
 @dataclass
@@ -108,6 +112,11 @@ def load_config(path: str) -> Config:
         else None,
         ssh_public_key=str(cluster_data.get("ssh_public_key"))
         if cluster_data.get("ssh_public_key")
+        else None,
+        qm_ssh_fallback=bool(cluster_data.get("qm_ssh_fallback", False)),
+        qm_ssh_user=str(cluster_data.get("qm_ssh_user", "root")),
+        qm_ssh_identity_file=str(cluster_data.get("qm_ssh_identity_file"))
+        if cluster_data.get("qm_ssh_identity_file")
         else None,
     )
 

@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import re
+import subprocess
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Callable
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 # JSON key written into the VM description field to mark GARM-managed VMs.
 _GARM_META_MARKER = "__garm__"
+
+# QGA readiness poll parameters
+_QGA_PING_ATTEMPTS = 30
+_QGA_PING_INTERVAL = 2
 
 
 def _parse_garm_meta(description: str | None) -> dict[str, str] | None:
@@ -449,49 +454,7 @@ class PVEClient:
         logger.info("Starting QEMU VM %d", vmid)
         upid = self._prox.nodes(node).qemu(vmid).status.start.post()
         if userdata:
-            logger.info("Executing userdata script via QEMU Guest Agent in VM %d", vmid)
-            import time
-
-            for _ in range(30):
-                try:
-                    self._prox.nodes(node).qemu(vmid).agent.ping.post()
-                    break
-                except Exception:
-                    time.sleep(2)
-            else:
-                logger.warning("QEMU Guest Agent not ready in VM %d", vmid)
-
-            try:
-                if os_type.lower() == "windows":
-                    res = (
-                        self._prox.nodes(node)
-                        .qemu(vmid)
-                        .agent.exec.post(
-                            command=[
-                                "powershell.exe",
-                                "-NonInteractive",
-                                "-ExecutionPolicy",
-                                "Bypass",
-                                "-Command",
-                                userdata,
-                            ]
-                        )
-                    )
-                else:
-                    res = (
-                        self._prox.nodes(node)
-                        .qemu(vmid)
-                        .agent.exec.post(command=["/bin/bash", "-c", userdata])
-                    )
-                logger.info(
-                    "Successfully executed userdata via QGA for VM %d, result: %s",
-                    vmid,
-                    res,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to execute userdata via QGA for VM %d: %s", vmid, exc
-                )
+            self._run_userdata_qemu(node, vmid, userdata, os_type)
 
         logger.info("Successfully created QEMU VM %d (%s)", vmid, name)
         return Instance(
@@ -566,6 +529,146 @@ class PVEClient:
             status=InstanceStatus.RUNNING,
             pool_id=pool_id,
         )
+
+    def _wait_for_qga(self, node: str, vmid: int) -> bool:
+        """Poll QGA ping until ready; return True on success, False on timeout."""
+        for attempt in range(1, _QGA_PING_ATTEMPTS + 1):
+            logger.info(
+                "Waiting for QEMU Guest Agent in VM %d (attempt %d/%d)",
+                vmid,
+                attempt,
+                _QGA_PING_ATTEMPTS,
+            )
+            try:
+                self._prox.nodes(node).qemu(vmid).agent.ping.post()
+                logger.info("QEMU Guest Agent ready in VM %d", vmid)
+                return True
+            except Exception:
+                time.sleep(_QGA_PING_INTERVAL)
+        logger.warning(
+            "QEMU Guest Agent not ready in VM %d after %d attempts",
+            vmid,
+            _QGA_PING_ATTEMPTS,
+        )
+        return False
+
+    def _exec_via_qm_ssh(
+        self, node: str, vmid: int, userdata: str, *, pve_host: str
+    ) -> bool:
+        """Execute *userdata* inside VM *vmid* via ``qm guest exec`` over SSH.
+
+        This is an **opt-in fallback** that requires host-level SSH access to
+        the Proxmox node.  Enable it only when you understand the security
+        implications (see README Security note).
+
+        The helper builds::
+
+            ssh [-i identity_file] <user>@<pve_host> qm guest exec <vmid> -- /bin/bash -c '<userdata>'
+
+        and captures stdout/stderr for logging.
+        """
+        cluster = self._config.cluster
+        ssh_user = cluster.qm_ssh_user
+        cmd: list[str] = ["ssh"]
+        if cluster.qm_ssh_identity_file:
+            cmd += ["-i", cluster.qm_ssh_identity_file]
+        cmd += [
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "BatchMode=yes",
+            f"{ssh_user}@{pve_host}",
+            "qm",
+            "guest",
+            "exec",
+            str(vmid),
+            "--",
+            "/bin/bash",
+            "-c",
+            userdata,
+        ]
+        logger.info("qm SSH fallback: executing userdata for VM %d via SSH", vmid)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            logger.info(
+                "qm SSH fallback result for VM %d: rc=%d stdout=%r stderr=%r",
+                vmid,
+                result.returncode,
+                result.stdout[:500],
+                result.stderr[:500],
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "qm SSH fallback exited non-zero (%d) for VM %d",
+                    result.returncode,
+                    vmid,
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("qm SSH fallback failed for VM %d: %s", vmid, exc)
+            return False
+
+    def _run_userdata_qemu(
+        self, node: str, vmid: int, userdata: str, os_type: str
+    ) -> None:
+        """Wait for QGA and execute *userdata* inside the VM; log all outcomes.
+
+        Falls back to the ``qm guest exec`` SSH path when configured.
+        """
+        logger.info("Executing userdata script via QEMU Guest Agent in VM %d", vmid)
+        qga_ready = self._wait_for_qga(node, vmid)
+
+        if not qga_ready:
+            if self._config.cluster.qm_ssh_fallback:
+                parsed = (
+                    urllib.parse.urlparse(self._config.pve.host)
+                    if "://" in self._config.pve.host
+                    else urllib.parse.urlparse(f"https://{self._config.pve.host}")
+                )
+                pve_host = parsed.hostname or self._config.pve.host
+                self._exec_via_qm_ssh(node, vmid, userdata, pve_host=str(pve_host))
+            return
+
+        try:
+            if os_type.lower() == "windows":
+                res = (
+                    self._prox.nodes(node)
+                    .qemu(vmid)
+                    .agent.exec.post(
+                        command=[
+                            "powershell.exe",
+                            "-NonInteractive",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-Command",
+                            userdata,
+                        ]
+                    )
+                )
+            else:
+                res = (
+                    self._prox.nodes(node)
+                    .qemu(vmid)
+                    .agent.exec.post(command=["/bin/bash", "-c", userdata])
+                )
+            logger.info(
+                "Successfully executed userdata via QGA for VM %d, response: %s",
+                vmid,
+                res,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to execute userdata via QGA for VM %d: %s", vmid, exc
+            )
+            if self._config.cluster.qm_ssh_fallback:
+                parsed = (
+                    urllib.parse.urlparse(self._config.pve.host)
+                    if "://" in self._config.pve.host
+                    else urllib.parse.urlparse(f"https://{self._config.pve.host}")
+                )
+                pve_host = parsed.hostname or self._config.pve.host
+                self._exec_via_qm_ssh(node, vmid, userdata, pve_host=str(pve_host))
 
     def delete_instance(self, vmid: str | int) -> None:
         """Stop and destroy instance *vmid*; no-op if the instance does not exist."""
