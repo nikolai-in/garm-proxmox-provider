@@ -23,9 +23,6 @@ WORKDIR /opt/garm
 COPY --from=garm-bin /bin/garm /usr/local/bin/garm
 COPY --from=garm-bin /bin/garm-cli /usr/local/bin/garm-cli
 
-# Templates
-COPY templates/ /opt/garm/templates/
-
 # Provider install (wheel built in provider stage)
 COPY --from=provider-build /src/dist/*.whl /tmp/
 RUN python -m pip install --no-cache-dir /tmp/*.whl \
