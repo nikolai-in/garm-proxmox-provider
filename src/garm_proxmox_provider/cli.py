@@ -39,6 +39,8 @@ def _setup_logging(config_path: str | None = None) -> None:
 
     # Try to load logging defaults from TOML if available
     logging_cfg = None
+    # Ensure toml_path is always defined so later diagnostics can safely reference it.
+    toml_path = None
     try:
         from .config import load_logging_from_toml
 

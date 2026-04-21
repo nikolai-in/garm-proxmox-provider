@@ -54,11 +54,35 @@ chmod 700 /home/runner/.ssh
 chmod 600 /home/runner/.ssh/authorized_keys
 """
 
+    # If the bootstrap payload provides a base64-encoded installer template,
+    # decode it into the expected startup script path so we can run it.
+    installer_b64 = None
+    try:
+        installer_b64 = (
+            bootstrap.extra_specs.get("runner_install_template")
+            if bootstrap.extra_specs
+            else None
+        )
+    except Exception:
+        installer_b64 = None
+
+    install_snippet = ""
+    if installer_b64:
+        # create scripts dir, write the base64 content into the startup script
+        # and make it executable. Use a heredoc with a quoted delimiter to avoid
+        # variable expansion in the payload.
+        install_snippet = f"""mkdir -p /opt/garm/scripts
+cat > /opt/garm/scripts/startup-linux.sh <<'__GARM_INSTALL__'
+{installer_b64}
+__GARM_INSTALL__
+chmod +x /opt/garm/scripts/startup-linux.sh
+
+"""
+
     return f"""#!/bin/bash
 set -euo pipefail
 
-{ssh_setup}
-export METADATA_URL="{bootstrap.metadata_url.rstrip("/")}"
+{ssh_setup}{install_snippet}export METADATA_URL="{bootstrap.metadata_url.rstrip("/")}"
 export CALLBACK_URL="{bootstrap.callback_url}"
 export BEARER_TOKEN="{bootstrap.instance_token}"
 export REPO_URL="{bootstrap.repo_url}"

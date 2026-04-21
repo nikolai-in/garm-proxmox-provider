@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -632,32 +633,53 @@ class PVEClient:
     ) -> None:
         """Wait for QGA and execute *userdata* inside the VM; log all outcomes.
 
-        Falls back to the ``qm guest exec`` SSH path when configured.
+        Prefer the ``qm guest exec`` SSH path when configured — try SSH execution
+        first and fall back to the QEMU Guest Agent exec if SSH execution fails.
         """
         logger.info("Executing userdata script via QEMU Guest Agent in VM %d", vmid)
+
+        # If SSH fallback is enabled, attempt to execute userdata via qm (over SSH)
+        # first. If that succeeds, we consider the bootstrap done and skip QGA exec.
+        if self._config.cluster.qm_ssh_fallback:
+            parsed = (
+                urllib.parse.urlparse(self._config.pve.host)
+                if "://" in self._config.pve.host
+                else urllib.parse.urlparse(f"https://{self._config.pve.host}")
+            )
+            pve_host = parsed.hostname or self._config.pve.host
+            logger.info(
+                "Attempting qm SSH fallback to execute userdata for VM %d", vmid
+            )
+            try:
+                ok = self._exec_via_qm_ssh(node, vmid, userdata, pve_host=str(pve_host))
+            except Exception as exc:
+                logger.debug(
+                    "qm SSH fallback attempt raised an exception for VM %d: %s",
+                    vmid,
+                    exc,
+                )
+                ok = False
+
+            if ok:
+                logger.info(
+                    "Successfully executed userdata via qm SSH fallback for VM %d",
+                    vmid,
+                )
+                return
+            else:
+                logger.warning(
+                    "qm SSH fallback failed for VM %d; falling back to QGA exec",
+                    vmid,
+                )
+
+        # Fall back to QGA path: wait for the guest agent and then exec via QGA.
         qga_ready = self._wait_for_qga(node, vmid)
 
         if not qga_ready:
-            if self._config.cluster.qm_ssh_fallback:
-                parsed = (
-                    urllib.parse.urlparse(self._config.pve.host)
-                    if "://" in self._config.pve.host
-                    else urllib.parse.urlparse(f"https://{self._config.pve.host}")
-                )
-                pve_host = parsed.hostname or self._config.pve.host
-                ok = self._exec_via_qm_ssh(node, vmid, userdata, pve_host=str(pve_host))
-                if not ok:
-                    logger.error(
-                        "Bootstrap via qm SSH fallback also failed for VM %d; "
-                        "runner may not be registered",
-                        vmid,
-                    )
-            else:
-                logger.error(
-                    "QGA not ready for VM %d and qm_ssh_fallback is disabled; "
-                    "runner bootstrap was skipped",
-                    vmid,
-                )
+            logger.error(
+                "QEMU Guest Agent not ready in VM %d; runner bootstrap was skipped",
+                vmid,
+            )
             return
 
         try:
@@ -682,11 +704,161 @@ class PVEClient:
                     .qemu(vmid)
                     .agent.exec.post(command=["/bin/bash", "-c", userdata])
                 )
-            logger.info(
-                "Successfully executed userdata via QGA for VM %d, response: %s",
-                vmid,
-                res,
-            )
+
+            logger.debug("QGA exec returned: %s", res)
+
+            # Extract pid from Proxmox response (varies by proxmoxer/host).
+            # Be defensive: proxmoxer may return None or non-dict payloads.
+            pid = None
+            if isinstance(res, dict):
+                pid = res.get("pid")
+                if pid is None:
+                    ret = res.get("return")
+                    if isinstance(ret, dict):
+                        pid = ret.get("pid")
+
+            if not pid:
+                logger.warning(
+                    "No pid returned from QGA exec for VM %d; unable to track status",
+                    vmid,
+                )
+                # Try SSH fallback if enabled
+                if self._config.cluster.qm_ssh_fallback:
+                    parsed = (
+                        urllib.parse.urlparse(self._config.pve.host)
+                        if "://" in self._config.pve.host
+                        else urllib.parse.urlparse(f"https://{self._config.pve.host}")
+                    )
+                    pve_host = parsed.hostname or self._config.pve.host
+                    ok = self._exec_via_qm_ssh(
+                        node, vmid, userdata, pve_host=str(pve_host)
+                    )
+                    if not ok:
+                        logger.error(
+                            "Bootstrap via qm SSH fallback also failed for VM %d; runner may not be registered",
+                            vmid,
+                        )
+                else:
+                    logger.warning(
+                        "qm_ssh_fallback disabled; cannot recover bootstrap for VM %d",
+                        vmid,
+                    )
+                return
+
+            # Poll exec-status until completion or timeout
+            exec_timeout = 300  # seconds
+            deadline = time.monotonic() + exec_timeout
+            poll_interval = 1.0
+            finished = False
+
+            while time.monotonic() < deadline:
+                try:
+                    status_resp = (
+                        self._prox.nodes(node)
+                        .qemu(vmid)
+                        .agent.get("exec-status", pid=pid)
+                    )
+                    # proxmoxer responses vary; normalize to a dict with fields.
+                    # Ensure `info` is always a dict to avoid None.get() calls.
+                    if isinstance(status_resp, dict):
+                        info = status_resp.get("result", status_resp) or {}
+                    else:
+                        # status_resp can be None or a scalar; coerce to dict
+                        info = status_resp or {}
+                        if not isinstance(info, dict):
+                            info = {}
+
+                    exited = bool(info.get("exited", False))
+                    exitcode = None
+                    # Prefer explicit 'exitcode' if present; otherwise try alternate keys
+                    if "exitcode" in info and info.get("exitcode") is not None:
+                        exitcode = info.get("exitcode")
+                    else:
+                        exitcode = info.get("exit-code") or info.get("exit_code")
+
+                    if exited or exitcode is not None:
+                        # decode stdout/stderr if provided (QGA often returns base64)
+                        out_b64 = (
+                            info.get("out-data")
+                            or info.get("out_data")
+                            or info.get("out")
+                        )
+                        err_b64 = (
+                            info.get("err-data")
+                            or info.get("err_data")
+                            or info.get("err")
+                        )
+                        out = ""
+                        err = ""
+                        try:
+                            if out_b64:
+                                out = base64.b64decode(out_b64).decode(errors="replace")
+                            if err_b64:
+                                err = base64.b64decode(err_b64).decode(errors="replace")
+                        except Exception:
+                            out = str(out_b64)
+                            err = str(err_b64)
+
+                        logger.info(
+                            "QGA exec for VM %d finished: exitcode=%r stdout=%r stderr=%r",
+                            vmid,
+                            exitcode,
+                            out[:1000],
+                            err[:1000],
+                        )
+
+                        if exitcode and int(exitcode) != 0:
+                            logger.warning(
+                                "userdata exited non-zero (%s) for VM %d",
+                                exitcode,
+                                vmid,
+                            )
+                            # attempt SSH fallback if configured
+                            if self._config.cluster.qm_ssh_fallback:
+                                parsed = (
+                                    urllib.parse.urlparse(self._config.pve.host)
+                                    if "://" in self._config.pve.host
+                                    else urllib.parse.urlparse(
+                                        f"https://{self._config.pve.host}"
+                                    )
+                                )
+                                pve_host = parsed.hostname or self._config.pve.host
+                                ok = self._exec_via_qm_ssh(
+                                    node, vmid, userdata, pve_host=str(pve_host)
+                                )
+                                if not ok:
+                                    logger.error(
+                                        "Bootstrap via qm SSH fallback also failed for VM %d; runner may not be registered",
+                                        vmid,
+                                    )
+                        finished = True
+                        break
+                except Exception as exc:
+                    logger.debug("Error polling exec-status for VM %d: %s", vmid, exc)
+                time.sleep(poll_interval)
+
+            if not finished:
+                logger.warning(
+                    "QGA exec for VM %d did not complete within %ds; it may still be running inside the guest",
+                    vmid,
+                    exec_timeout,
+                )
+                if self._config.cluster.qm_ssh_fallback:
+                    parsed = (
+                        urllib.parse.urlparse(self._config.pve.host)
+                        if "://" in self._config.pve.host
+                        else urllib.parse.urlparse(f"https://{self._config.pve.host}")
+                    )
+                    pve_host = parsed.hostname or self._config.pve.host
+                    ok = self._exec_via_qm_ssh(
+                        node, vmid, userdata, pve_host=str(pve_host)
+                    )
+                    if not ok:
+                        logger.error(
+                            "Bootstrap via qm SSH fallback also failed for VM %d; runner may not be registered",
+                            vmid,
+                        )
+
         except Exception as exc:
             logger.warning(
                 "Failed to execute userdata via QGA for VM %d: %s", vmid, exc
@@ -701,8 +873,7 @@ class PVEClient:
                 ok = self._exec_via_qm_ssh(node, vmid, userdata, pve_host=str(pve_host))
                 if not ok:
                     logger.error(
-                        "Bootstrap via qm SSH fallback also failed for VM %d; "
-                        "runner may not be registered",
+                        "Bootstrap via qm SSH fallback also failed for VM %d; runner may not be registered",
                         vmid,
                     )
 
