@@ -37,8 +37,6 @@ def _mock_cluster_config(ssh_public_key: str = "") -> ClusterConfig:
         bridge="vmbr0",
         ssh_public_key=ssh_public_key,
     )
-
-
 def test_is_gitea_implicit() -> None:
     b = _bootstrap(repo_url="https://gitea.example.com/org/repo")
     assert _is_gitea(b) is True
@@ -74,7 +72,8 @@ def test_linux_github_userdata() -> None:
     assert 'export RUNNER_LABELS="self-hosted,linux"' in ud
     assert 'export FORGE_TYPE="github"' in ud
     assert 'export PROVIDER_ID="1001"' in ud
-    assert "bash /opt/garm/scripts/startup-linux.sh" in ud
+    # No baked-in script path — bootstrap comes entirely from GARM.
+    assert "bash /opt/garm/scripts/startup-linux.sh" not in ud
 
 
 def test_linux_gitea_userdata() -> None:
@@ -92,6 +91,14 @@ def test_linux_ssh_key_injected() -> None:
     assert 'echo "ssh-ed25519 AAAA test@h" >> /home/runner/.ssh/authorized_keys' in ud
 
 
+def test_linux_ssh_key_from_extra_specs() -> None:
+    """ssh_public_key in extra_specs takes precedence over cluster config."""
+    b = _bootstrap(extra_specs={"ssh_public_key": "ssh-ed25519 EXTRA extra@h"})
+    ud = render_userdata(b, "1001", _mock_cluster_config(ssh_public_key="ssh-ed25519 DEFAULT def@h"))
+    assert 'echo "ssh-ed25519 EXTRA extra@h" >> /home/runner/.ssh/authorized_keys' in ud
+    assert "DEFAULT" not in ud
+
+
 def test_windows_github_userdata() -> None:
     b = _bootstrap(os_type="windows")
     ud = render_userdata(b, "2001", _mock_cluster_config())
@@ -106,7 +113,8 @@ def test_windows_github_userdata() -> None:
     assert '$env:RUNNER_LABELS = "self-hosted,linux"' in ud
     assert '$env:FORGE_TYPE = "github"' in ud
     assert '$env:PROVIDER_ID = "2001"' in ud
-    assert "& C:\\garm\\scripts\\startup-windows.ps1" in ud
+    # No baked-in script path — bootstrap comes entirely from GARM.
+    assert "startup-windows.ps1" not in ud
 
 
 def test_windows_gitea_userdata() -> None:
@@ -125,3 +133,26 @@ def test_windows_labels_fallback_to_pool_id() -> None:
     b = _bootstrap(os_type="windows", labels=[])
     ud = render_userdata(b, "2001", _mock_cluster_config())
     assert '$env:RUNNER_LABELS = "pool-111"' in ud
+
+
+def test_linux_runner_install_template_decoded() -> None:
+    """When runner_install_template is in extra_specs, it is decoded and used directly."""
+    import base64
+
+    custom_script = "#!/bin/bash\necho 'custom runner install'\n"
+    b64 = base64.b64encode(custom_script.encode()).decode()
+    b = _bootstrap(extra_specs={"runner_install_template": b64})
+    ud = render_userdata(b, "1001", _mock_cluster_config())
+    assert "echo 'custom runner install'" in ud
+    # The pre-baked fallback path should NOT be called.
+    assert "bash /opt/garm/scripts/startup-linux.sh" not in ud
+
+
+def test_linux_runner_install_template_bad_b64_produces_no_body() -> None:
+    """Invalid base64 in runner_install_template: warning is logged, body is empty."""
+    b = _bootstrap(extra_specs={"runner_install_template": "NOT_VALID_BASE64!!!"})
+    ud = render_userdata(b, "1001", _mock_cluster_config())
+    # No baked-in fallback; env vars are still present.
+    assert "bash /opt/garm/scripts/startup-linux.sh" not in ud
+    assert "startup-windows.ps1" not in ud
+    assert "export METADATA_URL" in ud

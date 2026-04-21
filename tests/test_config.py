@@ -21,8 +21,6 @@ node = "pve1"
 storage = "local-lvm"
 bridge = "vmbr0"
 
-[images.default]
-
 [flavors.default]
 cores = 2
 memory_mb = 4096
@@ -43,8 +41,7 @@ bridge = "vmbr0"
 snippets_storage = "shared-storage"
 pool = "garm-pool"
 ssh_public_key = "ssh-ed25519 AAAA test@example.com"
-
-[images.default]
+lxc_unprivileged = false
 
 [flavors.default]
 cores = 2
@@ -72,6 +69,9 @@ def test_load_minimal_config(tmp_path: Path) -> None:
     assert cfg.flavors["default"].cores == 2
     assert cfg.flavors["default"].memory_mb == 4096
     assert cfg.cluster.bridge == "vmbr0"
+    assert cfg.cluster.lxc_unprivileged is True
+    # No images section — config has no images dict.
+    assert not hasattr(cfg, "images")
 
 
 def test_load_full_config(tmp_path: Path) -> None:
@@ -80,6 +80,7 @@ def test_load_full_config(tmp_path: Path) -> None:
     assert cfg.cluster.snippets_storage == "shared-storage"
     assert cfg.cluster.pool == "garm-pool"
     assert cfg.cluster.ssh_public_key == "ssh-ed25519 AAAA test@example.com"
+    assert cfg.cluster.lxc_unprivileged is False
 
 
 def test_missing_pve_host(tmp_path: Path) -> None:
@@ -123,88 +124,21 @@ def test_invalid_toml(tmp_path: Path) -> None:
         load_config(str(bad_path))
 
 
-def test_missing_template_source(tmp_path: Path) -> None:
-    """Config with no images must fail on get_image()."""
-    bad = """\
-[pve]
-host = "https://pve.example.com:8006"
-user = "root@pam"
-token_name = "garm"
-token_value = "aaaa"
-
-[cluster]
-node = "pve1"
-storage = "local-lvm"
-"""
-    cfg = load_config(_write_config(tmp_path, bad))
-    with pytest.raises(ConfigError, match="not found in provider"):
-        cfg.get_image("default")
-
-
-def test_images_config(tmp_path: Path) -> None:
-    toml = """\
-[pve]
-host = "pve.example.com"
-user = "root@pam"
-token_name = "garm"
-token_value = "aaaa"
-
-[cluster]
-node = "pve1"
-
-[images.default]
-
-[images.win]
-"""
-    cfg = load_config(_write_config(tmp_path, toml))
-    assert "default" in cfg.images
-
-
-def test_invalid_image_type_raises(tmp_path: Path) -> None:
-    toml = """\
-[pve]
-host = "https://pve.example.com:8006"
-user = "root@pam"
-token_name = "garm"
-token_value = "aaaa"
-
-[cluster]
-node = "pve1"
-
-[images.broken]
-type = "docker"
-"""
-    with pytest.raises(ConfigError, match="must be 'vm' or 'lxc'"):
-        load_config(_write_config(tmp_path, toml))
-
-
-# ---------------------------------------------------------------------------
-# LXC instance_type
-# ---------------------------------------------------------------------------
-
-
-def test_default_instance_type_is_vm(tmp_path: Path) -> None:
+def test_lxc_unprivileged_defaults_to_true(tmp_path: Path) -> None:
+    """When lxc_unprivileged is omitted it defaults to True."""
     cfg = load_config(_write_config(tmp_path, MINIMAL_TOML))
-    assert cfg.images["default"].type == "vm"
-    assert cfg.images["default"].lxc_unprivileged is True
+    assert cfg.cluster.lxc_unprivileged is True
 
 
-def test_lxc_instance_type_loads(tmp_path: Path) -> None:
-    toml = """\
-[pve]
-host = "pve.example.com"
-user = "root@pam"
-token_name = "garm"
-token_value = "aaaa"
+def test_lxc_unprivileged_can_be_false(tmp_path: Path) -> None:
+    cfg = load_config(_write_config(tmp_path, FULL_TOML))
+    assert cfg.cluster.lxc_unprivileged is False
 
-[cluster]
-node = "pve1"
 
-[images.default]
-type = "lxc"
-lxc_unprivileged = false
-"""
-    cfg = load_config(_write_config(tmp_path, toml))
-    assert "default" in cfg.images
-    assert cfg.images["default"].type == "lxc"
-    assert cfg.images["default"].lxc_unprivileged is False
+def test_no_qm_ssh_fields_in_cluster(tmp_path: Path) -> None:
+    """ClusterConfig must not have qm_ssh_* fields after the purge."""
+    cfg = load_config(_write_config(tmp_path, MINIMAL_TOML))
+    assert not hasattr(cfg.cluster, "qm_ssh_fallback")
+    assert not hasattr(cfg.cluster, "qm_ssh_user")
+    assert not hasattr(cfg.cluster, "qm_ssh_identity_file")
+

@@ -32,7 +32,7 @@ Once installed, the `garm-proxmox-provider` binary will be available in your env
 Before using the provider, Proxmox needs a dedicated user, role, and resource pool. We provide a fully automated setup utility that creates these with the exact minimum privileges required.
 
 ```bash
-garm-proxmox-provider setup-proxmox \
+garm-proxmox-provider admin setup-proxmox \
     --host "https://pve.example.com:8006" \
     --root-user "root@pam" \
     --garm-user "garm@pve" \
@@ -64,7 +64,8 @@ storage = "local-lvm"        # Storage for clone disks
 cores = 4
 memory_mb = 4096
 
-# Map GARM image names to Proxmox templates
+# Map GARM image names to Proxmox templates.
+# 'template' is the Proxmox VMID of the template to clone.
 [images.ubuntu-slim-runner]
 template = 9100
 type = "lxc"                 # "vm" for QEMU, "lxc" for containers
@@ -77,45 +78,44 @@ type = "vm"
 
 ## CLI Utilities
 
-While GARM interacts with the provider via environment variables, the binary includes explicit subcommands to help you manage and debug your setup locally.
+While GARM interacts with the provider via environment variables, the binary exposes utility sub-commands for humans.
 
-### 1. Lint Configuration
-
-Validates your `config.toml` file to catch missing fields, syntax errors, or logical misconfigurations.
+### Debugging
 
 ```bash
-garm-proxmox-provider lint-config --config /path/to/config.toml
+# Validate your config.toml
+garm-proxmox-provider --config /path/to/config.toml debug lint-config
+
+# Verify connectivity to the Proxmox API
+garm-proxmox-provider --config /path/to/config.toml debug test-connection
+
+# List all available VM/LXC templates on the cluster
+garm-proxmox-provider --config /path/to/config.toml debug list-templates
 ```
 
-### 2. Test Connection
+### Manual lifecycle operations
 
-Verifies that the provider can successfully authenticate and communicate with the Proxmox API.
-
-```bash
-garm-proxmox-provider test-connection --config /path/to/config.toml
-```
-
-### 3. List Templates
-
-Scans the Proxmox cluster and lists all available templates that match your configured `instance_type` (VM or LXC).
-
-```bash
-garm-proxmox-provider list-templates --config /path/to/config.toml
-```
-
-### 4. Manual Operations
-
-You can manually trigger any GARM operation for testing purposes:
+You can trigger any GARM operation directly for testing:
 
 ```bash
 # Get details of a specific runner
-garm-proxmox-provider get-instance --config ./config.toml --instance-id 105
+garm-proxmox-provider --config ./config.toml get-instance --instance-id 105
 
 # List all instances in a specific GARM pool
-garm-proxmox-provider list-instances --config ./config.toml --pool-id "pool-uuid-here"
+garm-proxmox-provider --config ./config.toml list-instances --pool-id "pool-uuid-here"
 
 # Stop an instance
-garm-proxmox-provider stop --config ./config.toml --instance-id 105
+garm-proxmox-provider --config ./config.toml stop --instance-id 105
+```
+
+### Proxmox cluster setup
+
+```bash
+garm-proxmox-provider admin setup-proxmox \
+    --host "https://pve.example.com:8006" \
+    --root-user "root@pam" \
+    --garm-user "garm@pve" \
+    --garm-pool "garm"
 ```
 
 ## GARM Integration

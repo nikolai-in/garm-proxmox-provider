@@ -25,8 +25,6 @@ node = "pve1"
 storage = "local-lvm"
 bridge = "vmbr0"
 
-[images.default]
-
 [flavors.default]
 cores = 2
 memory_mb = 4096
@@ -233,6 +231,30 @@ def test_cli_unknown_command() -> None:
         cli, env={"GARM_COMMAND": "UnknownCommand"}, catch_exceptions=False
     )
     assert result.exit_code != 0
+
+
+def test_cli_debug_subgroup_exists() -> None:
+    """'debug' subgroup should be registered on the root CLI."""
+    from garm_proxmox_provider.cli import cli
+
+    assert "debug" in cli.commands
+
+
+def test_cli_admin_subgroup_exists() -> None:
+    """'admin' subgroup should be registered on the root CLI."""
+    from garm_proxmox_provider.cli import cli
+
+    assert "admin" in cli.commands
+
+
+def test_cli_debug_commands_registered() -> None:
+    """Debug commands should be reachable under the 'debug' group."""
+    from garm_proxmox_provider.cli import cli
+
+    debug = cli.commands["debug"]
+    assert "test-connection" in debug.commands  # type: ignore[attr-defined]
+    assert "list-templates" in debug.commands  # type: ignore[attr-defined]
+    assert "lint-config" in debug.commands  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
