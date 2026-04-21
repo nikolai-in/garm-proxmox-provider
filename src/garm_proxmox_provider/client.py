@@ -6,7 +6,6 @@ import base64
 import json
 import logging
 import re
-import subprocess
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Callable
@@ -27,9 +26,6 @@ _GARM_META_MARKER = "__garm__"
 # QGA readiness poll parameters
 _QGA_PING_ATTEMPTS = 30
 _QGA_PING_INTERVAL = 2
-
-# qm SSH fallback timeout (seconds)
-_QM_SSH_TIMEOUT = 300
 
 
 def _parse_garm_meta(description: str | None) -> dict[str, str] | None:
@@ -154,6 +150,33 @@ class PVEClient:
                 node = res.get("node", self._config.cluster.node)
                 res_type = res.get("type", "qemu")
                 return node, res, res_type
+        return None
+
+    def _find_template_by_name(
+        self, name: str, res_type: str
+    ) -> tuple[str, dict[str, Any], str] | None:
+        """Return (node, resource_dict, res_type) for a named template of *res_type*.
+
+        Searches the cluster for a resource whose ``name`` matches *name*,
+        whose ``type`` is *res_type* (``"qemu"`` or ``"lxc"``), and whose
+        ``template`` flag is set to ``1``.
+        """
+        try:
+            resources = self._prox.cluster.resources.get(type="vm") or []
+        except Exception as exc:
+            logger.warning("Failed to query cluster resources: %s", exc)
+            return None
+        for res in resources:
+            if not res:
+                continue
+            if res.get("name") != name:
+                continue
+            if res.get("type") != res_type:
+                continue
+            if str(res.get("template", "0")) != "1":
+                continue
+            node = res.get("node", self._config.cluster.node)
+            return node, res, res_type
         return None
 
     def _vm_config(self, node: str, vmid: int) -> dict[str, Any]:
@@ -321,6 +344,7 @@ class PVEClient:
         name: str,
         controller_id: str,
         pool_id: str,
+        provider_type: str = "vm",
         userdata: str = "",
         os_type: str = "linux",
         os_arch: str = "amd64",
@@ -328,39 +352,42 @@ class PVEClient:
         cores: int | None = None,
         memory_mb: int | None = None,
         node: str | None = None,
-        template_vmid: int | None = None,
         image: str = "",
+        lxc_unprivileged: bool = True,
         userdata_factory: Callable[[str], str] | None = None,
     ) -> Instance:
         """Clone template, configure and start instance; return Instance.
 
-        For QEMU VMs (image type ``"vm"``), injects a cloud-init
-        snippet from *userdata*.  For LXC containers (image type ``"lxc"``),
-        injects bootstrap configuration as LXC environment variables.
+        *provider_type* must be ``"vm"`` (QEMU) or ``"lxc"``.  The template is
+        looked up by *image* name across the cluster; it must have ``template=1``
+        and a type matching *provider_type*.
+
+        For QEMU VMs the bootstrap script is injected via QEMU Guest Agent.
+        For LXC containers it is executed via the Proxmox ``pct exec`` API.
         """
-        image_cfg = self._config.get_image(image)
+        res_type = "lxc" if provider_type == "lxc" else "qemu"
 
         node = node or self._config.cluster.node
         if cores is None or memory_mb is None:
-            # We don't have flavor here directly, but the caller should have resolved it.
-            # Fall back to default flavor if None.
             def_flavor = self._config.get_flavor("default")
             cores = cores or def_flavor.cores
             memory_mb = memory_mb or def_flavor.memory_mb
 
-        tmpl_vmid = image
         garm_meta = _build_garm_meta(controller_id, pool_id, name, os_type, os_arch)
 
-        found_tmpl = self._find_instance(tmpl_vmid)
+        found_tmpl = self._find_template_by_name(image, res_type)
         if found_tmpl is None:
-            raise RuntimeError(f"Template VMID {tmpl_vmid} not found in cluster")
-        _, res_tmpl, res_type = found_tmpl
+            raise RuntimeError(
+                f"Template '{image}' (type={res_type}) not found in cluster. "
+                "Ensure a template with that name and template=1 exists."
+            )
+        _, res_tmpl, _ = found_tmpl
         real_tmpl_vmid = int(res_tmpl.get("vmid", 0))
 
         for attempt in range(5):
             vmid = self._next_vmid()
             try:
-                if res_type == "lxc":
+                if provider_type == "lxc":
                     return self._create_lxc(
                         vmid=vmid,
                         tmpl_vmid=real_tmpl_vmid,
@@ -375,7 +402,7 @@ class PVEClient:
                         cores=cores,
                         memory_mb=memory_mb,
                         node=node,
-                        lxc_unprivileged=image_cfg.lxc_unprivileged,
+                        lxc_unprivileged=lxc_unprivileged,
                     )
 
                 return self._create_qemu(
@@ -519,14 +546,14 @@ class PVEClient:
         logger.info("Starting LXC container %d", vmid)
         upid = self._prox.nodes(node).lxc(vmid).status.start.post()
         if userdata:
-            logger.info("Executing userdata script in LXC %d", vmid)
-            # Use Proxmox API exec to run the script
+            logger.info("Executing userdata script in LXC %d via pct exec", vmid)
+            # Use the Proxmox pct exec API to run the bootstrap script.
             try:
                 self._prox.nodes(node).lxc(vmid).exec.post(
                     command=["/bin/bash", "-c", userdata]
                 )
             except Exception as exc:
-                logger.warning("Failed to execute userdata in LXC: %s", exc)
+                logger.warning("Failed to execute userdata in LXC %d: %s", vmid, exc)
 
         # Try to collect IP addresses immediately so GARM sees them without waiting
         try:
@@ -567,110 +594,12 @@ class PVEClient:
         )
         return False
 
-    def _exec_via_qm_ssh(
-        self, node: str, vmid: int, userdata: str, *, pve_host: str
-    ) -> bool:
-        """Execute *userdata* inside VM *vmid* via ``qm guest exec`` over SSH.
-
-        This is an **opt-in fallback** that requires host-level SSH access to
-        the Proxmox node.  Enable it only when you understand the security
-        implications (see README Security note).
-
-        The helper builds::
-
-            ssh [-i identity_file] <user>@<pve_host> qm guest exec <vmid> -- /bin/bash -c '<userdata>'
-
-        and captures stdout/stderr for logging.
-        """
-        cluster = self._config.cluster
-        ssh_user = cluster.qm_ssh_user
-        cmd: list[str] = ["ssh"]
-        if cluster.qm_ssh_identity_file:
-            cmd += ["-i", cluster.qm_ssh_identity_file]
-        cmd += [
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            "-o",
-            "BatchMode=yes",
-            f"{ssh_user}@{pve_host}",
-            "qm",
-            "guest",
-            "exec",
-            str(vmid),
-            "--",
-            "/bin/bash",
-            "-c",
-            userdata,
-        ]
-        logger.info("qm SSH fallback: executing userdata for VM %d via SSH", vmid)
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=_QM_SSH_TIMEOUT
-            )
-            logger.info(
-                "qm SSH fallback result for VM %d: rc=%d stdout=%r stderr=%r",
-                vmid,
-                result.returncode,
-                result.stdout[:500],
-                result.stderr[:500],
-            )
-            if result.returncode != 0:
-                logger.warning(
-                    "qm SSH fallback exited non-zero (%d) for VM %d",
-                    result.returncode,
-                    vmid,
-                )
-                return False
-            return True
-        except Exception as exc:
-            logger.warning("qm SSH fallback failed for VM %d: %s", vmid, exc)
-            return False
-
-    def _try_ssh_fallback(self, node: str, vmid: int, userdata: str) -> bool:
-        """Attempt SSH fallback; return True if succeeded, False otherwise.
-
-        No-op (returns False) when ``qm_ssh_fallback`` is disabled in config.
-        """
-        if not self._config.cluster.qm_ssh_fallback:
-            return False
-        parsed = (
-            urllib.parse.urlparse(self._config.pve.host)
-            if "://" in self._config.pve.host
-            else urllib.parse.urlparse(f"https://{self._config.pve.host}")
-        )
-        pve_host = str(parsed.hostname or self._config.pve.host)
-        ok = self._exec_via_qm_ssh(node, vmid, userdata, pve_host=pve_host)
-        if not ok:
-            logger.error(
-                "Bootstrap via qm SSH fallback also failed for VM %d; runner may not be registered",
-                vmid,
-            )
-        return ok
-
     def _run_userdata_qemu(
         self, node: str, vmid: int, userdata: str, os_type: str
     ) -> None:
-        """Wait for QGA and execute *userdata* inside the VM; log all outcomes.
-
-        When ``qm_ssh_fallback`` is enabled, tries SSH first and skips QGA on
-        success.  On any failure, SSH fallback is attempted as a last resort.
-        """
+        """Wait for QGA and execute *userdata* inside the VM via qm guest exec."""
         logger.info("Executing userdata script via QEMU Guest Agent in VM %d", vmid)
 
-        # SSH-first path: if enabled, try it before waiting for QGA.
-        if self._config.cluster.qm_ssh_fallback:
-            logger.info("Attempting qm SSH fallback to execute userdata for VM %d", vmid)
-            ok = self._try_ssh_fallback(node, vmid, userdata)
-            if ok:
-                logger.info(
-                    "Successfully executed userdata via qm SSH fallback for VM %d", vmid
-                )
-                return
-            logger.warning(
-                "qm SSH fallback failed for VM %d; falling back to QGA exec", vmid
-            )
-
-        # QGA path: wait for guest agent then exec.
         if not self._wait_for_qga(node, vmid):
             logger.error(
                 "QEMU Guest Agent not ready in VM %d; runner bootstrap was skipped",
@@ -716,7 +645,6 @@ class PVEClient:
                     "No pid returned from QGA exec for VM %d; unable to track status",
                     vmid,
                 )
-                self._try_ssh_fallback(node, vmid, userdata)
                 return
 
             # Poll exec-status until completion or timeout.
@@ -780,7 +708,6 @@ class PVEClient:
                             logger.warning(
                                 "userdata exited non-zero (%s) for VM %d", exitcode, vmid
                             )
-                            self._try_ssh_fallback(node, vmid, userdata)
 
                         finished = True
                         break
@@ -795,13 +722,11 @@ class PVEClient:
                     vmid,
                     exec_timeout,
                 )
-                self._try_ssh_fallback(node, vmid, userdata)
 
         except Exception as exc:
             logger.warning(
                 "Failed to execute userdata via QGA for VM %d: %s", vmid, exc
             )
-            self._try_ssh_fallback(node, vmid, userdata)
 
     def delete_instance(self, vmid: str | int) -> None:
         """Stop and destroy instance *vmid*; no-op if the instance does not exist."""

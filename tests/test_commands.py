@@ -25,8 +25,6 @@ node = "pve1"
 storage = "local-lvm"
 bridge = "vmbr0"
 
-[images.default]
-
 [flavors.default]
 cores = 2
 memory_mb = 4096

@@ -36,22 +36,13 @@ def _apply_extra_specs(bootstrap: BootstrapInstance, cfg: Any) -> dict[str, Any]
     """Merge defaults with extra_specs overrides from the bootstrap payload."""
     c = cfg.cluster
     f = cfg.get_flavor(bootstrap.flavor)
-    img = cfg.get_image(bootstrap.image) if bootstrap.image else None
     overrides: dict[str, Any] = {}
     es = bootstrap.extra_specs
 
     overrides["cores"] = int(es.get("cores", f.cores))
     overrides["memory_mb"] = int(es.get("memory_mb", f.memory_mb))
     overrides["node"] = es.get("node", c.node)
-
-    # Template VMID: explicit extra_specs override > image config > None
-    tmpl_raw = es.get("template_vmid")
-    if tmpl_raw is not None:
-        overrides["template_vmid"] = int(tmpl_raw)
-    elif img is not None and img.template_vmid is not None:
-        overrides["template_vmid"] = img.template_vmid
-    else:
-        overrides["template_vmid"] = None
+    overrides["lxc_unprivileged"] = bool(es.get("lxc_unprivileged", c.lxc_unprivileged))
     return overrides
 
 
@@ -60,8 +51,8 @@ def _apply_extra_specs(bootstrap: BootstrapInstance, cfg: Any) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def create_instance(config_path: str, bootstrap_data: str) -> None:
-    """CreateInstance: create VM, print Instance."""
+def create_instance(config_path: str, bootstrap_data: str, provider_type: str = "vm") -> None:
+    """CreateInstance: create VM or LXC container, print Instance."""
     cfg = _get_config(config_path)
     if not bootstrap_data.strip():
         _fatal("CreateInstance requires bootstrap JSON")
@@ -74,10 +65,11 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
 
     bootstrap = BootstrapInstance.from_dict(data)
     logger.info(
-        "Creating instance: name=%s, os_type=%s, image=%s",
+        "Creating instance: name=%s, os_type=%s, image=%s, provider_type=%s",
         bootstrap.name,
         bootstrap.os_type,
         bootstrap.image,
+        provider_type,
     )
     overrides = _apply_extra_specs(bootstrap, cfg)
 
@@ -94,6 +86,7 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
             name=bootstrap.name,
             controller_id=bootstrap.controller_id,
             pool_id=bootstrap.pool_id,
+            provider_type=provider_type,
             userdata=bootstrap.userdata,
             userdata_factory=factory,
             os_type=bootstrap.os_type,
@@ -101,7 +94,7 @@ def create_instance(config_path: str, bootstrap_data: str) -> None:
             cores=overrides["cores"],
             memory_mb=overrides["memory_mb"],
             node=overrides["node"],
-            template_vmid=overrides["template_vmid"],
+            lxc_unprivileged=overrides["lxc_unprivileged"],
             image=bootstrap.image,
         )
     except Exception as exc:

@@ -4,6 +4,19 @@ This module now supports an optional [logging] section in the TOML config.
 Note: runtime environment variables (e.g. GARM_LOG_FILE/GARM_LOG_LEVEL) should
 take precedence over TOML values; the TOML loader only provides defaults that
 the CLI's logging setup can choose to honor when env vars are absent.
+
+Templates are no longer predefined in config.  Instead, both the VM and LXC
+providers look up templates by name at runtime (searching for a QEMU or LXC
+resource with ``template=1`` and a matching name).  Only flavors need to be
+predefined.
+
+Extra specs (passed per-pool via GARM) can override per-instance settings:
+  - ``cores``, ``memory_mb``, ``node`` — resource sizing / placement
+  - ``lxc_unprivileged`` — LXC container privilege mode (default: true)
+  - ``ssh_public_key`` — inject an SSH public key into the runner user
+  - ``runner_install_template`` — base64-encoded bootstrap script provided
+    by GARM (required to actually register the runner)
+  - ``forge_type`` — "github" or "gitea" (auto-detected from repo URL when absent)
 """
 
 from __future__ import annotations
@@ -33,23 +46,13 @@ class ClusterConfig:
     bridge: str = "vmbr0"
     snippets_storage: str | None = None
     ssh_public_key: str | None = None
-    # Optional QGA SSH fallback for bootstrap execution
-    qm_ssh_fallback: bool = False
-    qm_ssh_user: str = "root"
-    qm_ssh_identity_file: str | None = None
+    lxc_unprivileged: bool = True  # default for LXC containers; overridable via extra_specs
 
 
 @dataclass
 class FlavorConfig:
     cores: int = 2
     memory_mb: int = 4096
-
-
-@dataclass
-class ImageConfig:
-    type: str = "vm"  # "vm" or "lxc"
-    lxc_unprivileged: bool = True
-    template_vmid: int | None = None  # Proxmox VMID of the template to clone
 
 
 @dataclass
@@ -67,7 +70,6 @@ class Config:
     pve: PVEConfig
     cluster: ClusterConfig
     flavors: dict[str, FlavorConfig] = field(default_factory=dict)
-    images: dict[str, ImageConfig] = field(default_factory=dict)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
     def get_flavor(self, name: str) -> FlavorConfig:
@@ -77,18 +79,6 @@ class Config:
         if "default" in self.flavors:
             return self.flavors["default"]
         return FlavorConfig()
-
-    def get_image(self, name: str) -> ImageConfig:
-        """Return the requested image configuration."""
-        if not name:
-            raise ConfigError(
-                "No image name provided by GARM. Please configure an image in your GARM pool."
-            )
-        if name not in self.images:
-            raise ConfigError(
-                f"Image '{name}' not found in provider [images] configuration."
-            )
-        return self.images[name]
 
 
 def load_config(path: str) -> Config:
@@ -134,11 +124,7 @@ def load_config(path: str) -> Config:
         ssh_public_key=str(cluster_data.get("ssh_public_key"))
         if cluster_data.get("ssh_public_key")
         else None,
-        qm_ssh_fallback=bool(cluster_data.get("qm_ssh_fallback", False)),
-        qm_ssh_user=str(cluster_data.get("qm_ssh_user", "root")),
-        qm_ssh_identity_file=str(cluster_data.get("qm_ssh_identity_file"))
-        if cluster_data.get("qm_ssh_identity_file")
-        else None,
+        lxc_unprivileged=bool(cluster_data.get("lxc_unprivileged", True)),
     )
 
     # --- Flavors section --------------------------------------------------
@@ -150,23 +136,6 @@ def load_config(path: str) -> Config:
         flavors[key] = FlavorConfig(
             cores=int(val.get("cores", 2)),
             memory_mb=int(val.get("memory_mb", 4096)),
-        )
-
-    # --- Images section ---------------------------------------------------
-    images_data = data.get("images", {})
-    images: dict[str, ImageConfig] = {}
-    for key, val in images_data.items():
-        if not isinstance(val, dict):
-            raise ConfigError(f"[images].{key} must be a dictionary")
-
-        type_val = str(val.get("type", "vm"))
-        if type_val not in ("vm", "lxc"):
-            raise ConfigError(f"[images].{key}.type must be 'vm' or 'lxc'")
-
-        images[key] = ImageConfig(
-            type=type_val,
-            lxc_unprivileged=bool(val.get("lxc_unprivileged", True)),
-            template_vmid=int(val["template"]) if val.get("template") else None,
         )
 
     # --- Logging section (optional) ---------------------------------------
@@ -184,7 +153,6 @@ def load_config(path: str) -> Config:
         pve=pve,
         cluster=cluster,
         flavors=flavors,
-        images=images,
         logging=logging_cfg,
     )
 
