@@ -1,20 +1,26 @@
 """Cloud-init / cloudbase-init user-data renderer for GARM runner bootstrap.
 
-Templates assume the runner binary is already present on the VM image
-(installed by the Packer build), along with the startup script at:
-  - Linux: /opt/garm/scripts/startup-linux.sh
-  - Windows: C:\\garm\\scripts\\startup-windows.ps1
+Bootstrap scripts are provided entirely by GARM via ``runner_install_template``
+in ``extra_specs`` (base64-encoded).  No baked-in fallback paths are used;
+the rendered script only exports environment variables when no install template
+is present.  GARM images must pick up those env vars themselves.
 
-The scripts only handle registration, service start, and status callback.
+SSH public keys can be provided via:
+  - ``[cluster].ssh_public_key`` in the provider TOML config, or
+  - ``extra_specs.ssh_public_key`` per pool in GARM (takes precedence).
 """
 
 from __future__ import annotations
 
+import base64
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import ClusterConfig
     from .models import BootstrapInstance
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Forge detection
@@ -30,7 +36,7 @@ def _is_gitea(bootstrap: BootstrapInstance) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Linux scripts — runner binary pre-installed by Packer image
+# Linux scripts
 # ---------------------------------------------------------------------------
 
 
@@ -39,13 +45,21 @@ def _render_linux_userdata(
     provider_id: str,
     defaults: ClusterConfig,
 ) -> str:
-    """Render a bash script for Linux (works with cloud-init and LXC exec)."""
+    """Render a bash script for Linux (works with cloud-init and LXC exec).
+
+    The bootstrap body is sourced exclusively from GARM's
+    ``runner_install_template`` extra_spec (base64-encoded).  When that key is
+    absent the script still exports all required env vars so that a GARM image
+    can pick them up via its own mechanism.
+    """
     labels = ",".join(bootstrap.labels) if bootstrap.labels else bootstrap.pool_id
     forge_type = "gitea" if _is_gitea(bootstrap) else "github"
 
+    # SSH key: extra_specs override takes precedence over cluster config.
+    ssh_key = (bootstrap.extra_specs or {}).get("ssh_public_key") or defaults.ssh_public_key
     ssh_setup = ""
-    if defaults.ssh_public_key:
-        key = defaults.ssh_public_key.strip()
+    if ssh_key:
+        key = ssh_key.strip()
         ssh_setup = f"""\
 mkdir -p /home/runner/.ssh
 echo "{key}" >> /home/runner/.ssh/authorized_keys
@@ -54,35 +68,8 @@ chmod 700 /home/runner/.ssh
 chmod 600 /home/runner/.ssh/authorized_keys
 """
 
-    # If the bootstrap payload provides a base64-encoded installer template,
-    # decode it into the expected startup script path so we can run it.
-    installer_b64 = None
-    try:
-        installer_b64 = (
-            bootstrap.extra_specs.get("runner_install_template")
-            if bootstrap.extra_specs
-            else None
-        )
-    except Exception:
-        installer_b64 = None
-
-    install_snippet = ""
-    if installer_b64:
-        # create scripts dir, write the base64 content into the startup script
-        # and make it executable. Use a heredoc with a quoted delimiter to avoid
-        # variable expansion in the payload.
-        install_snippet = f"""mkdir -p /opt/garm/scripts
-cat > /opt/garm/scripts/startup-linux.sh <<'__GARM_INSTALL__'
-{installer_b64}
-__GARM_INSTALL__
-chmod +x /opt/garm/scripts/startup-linux.sh
-
-"""
-
-    return f"""#!/bin/bash
-set -euo pipefail
-
-{ssh_setup}{install_snippet}export METADATA_URL="{bootstrap.metadata_url.rstrip("/")}"
+    env_block = f"""\
+export METADATA_URL="{bootstrap.metadata_url.rstrip("/")}"
 export CALLBACK_URL="{bootstrap.callback_url}"
 export BEARER_TOKEN="{bootstrap.instance_token}"
 export REPO_URL="{bootstrap.repo_url}"
@@ -90,14 +77,31 @@ export RUNNER_NAME="{bootstrap.name}"
 export RUNNER_LABELS="{labels}"
 export FORGE_TYPE="{forge_type}"
 export PROVIDER_ID="{provider_id}"
-
-bash /opt/garm/scripts/startup-linux.sh
 """
+
+    # GARM-rendered install template from extra_specs (base64-encoded).
+    # This IS the full bootstrap body; when absent, only env vars are exported.
+    body = ""
+    installer_b64 = (bootstrap.extra_specs or {}).get("runner_install_template")
+    if installer_b64:
+        try:
+            body = base64.b64decode(installer_b64).decode(errors="replace")
+        except Exception as exc:
+            logger.warning(
+                "Failed to decode runner_install_template for %s: %s",
+                bootstrap.name,
+                exc,
+            )
+
+    return f"""#!/bin/bash
+set -euo pipefail
+
+{ssh_setup}{env_block}
+{body}"""
 
 
 # ---------------------------------------------------------------------------
-# Windows scripts — runner binary pre-installed by Packer image
-# Executed via QEMU Guest Agent.
+# Windows scripts — executed via QEMU Guest Agent.
 # ---------------------------------------------------------------------------
 
 
@@ -105,14 +109,15 @@ def _render_windows_userdata(
     bootstrap: BootstrapInstance,
     provider_id: str,
 ) -> str:
-    """Render a cloudbase-init PowerShell script for Windows."""
+    """Render a cloudbase-init PowerShell script for Windows.
+
+    The bootstrap body is sourced from GARM's ``runner_install_template``
+    extra_spec (base64-encoded).  When absent, only env vars are set.
+    """
     labels = ",".join(bootstrap.labels) if bootstrap.labels else bootstrap.pool_id
     forge_type = "gitea" if _is_gitea(bootstrap) else "github"
 
-    return f"""\
-#ps1_sysnative
-$ErrorActionPreference = 'Stop'
-
+    env_block = f"""\
 $env:METADATA_URL = "{bootstrap.metadata_url.rstrip("/")}"
 $env:CALLBACK_URL = "{bootstrap.callback_url}"
 $env:BEARER_TOKEN = "{bootstrap.instance_token}"
@@ -121,9 +126,26 @@ $env:RUNNER_NAME = "{bootstrap.name}"
 $env:RUNNER_LABELS = "{labels}"
 $env:FORGE_TYPE = "{forge_type}"
 $env:PROVIDER_ID = "{provider_id}"
-
-& C:\\garm\\scripts\\startup-windows.ps1
 """
+
+    body = ""
+    installer_b64 = (bootstrap.extra_specs or {}).get("runner_install_template")
+    if installer_b64:
+        try:
+            body = base64.b64decode(installer_b64).decode(errors="replace")
+        except Exception as exc:
+            logger.warning(
+                "Failed to decode runner_install_template for %s: %s",
+                bootstrap.name,
+                exc,
+            )
+
+    return f"""\
+#ps1_sysnative
+$ErrorActionPreference = 'Stop'
+
+{env_block}
+{body}"""
 
 
 # ---------------------------------------------------------------------------

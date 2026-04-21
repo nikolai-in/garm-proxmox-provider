@@ -13,7 +13,6 @@ from garm_proxmox_provider.config import (
     ClusterConfig,
     Config,
     FlavorConfig,
-    ImageConfig,
     PVEConfig,
 )
 from garm_proxmox_provider.models import InstanceStatus
@@ -35,7 +34,9 @@ _GARM_META = json.dumps(
 )
 
 
-def _make_config(instance_type: str = "lxc", **kwargs: Any) -> Config:
+def _make_config(
+    instance_type: str = "lxc", **kwargs: Any
+) -> Config:
     pve = PVEConfig(
         host="pve.example.com",
         user="root@pam",
@@ -46,6 +47,7 @@ def _make_config(instance_type: str = "lxc", **kwargs: Any) -> Config:
     cluster = ClusterConfig(
         node=kwargs.get("node", "pve1"),
         storage=kwargs.get("storage", "local-lvm"),
+        lxc_unprivileged=kwargs.get("lxc_unprivileged", True),
     )
     flavors = {
         "default": FlavorConfig(
@@ -53,13 +55,7 @@ def _make_config(instance_type: str = "lxc", **kwargs: Any) -> Config:
             memory_mb=kwargs.get("memory_mb", 2048),
         )
     }
-    images = {
-        "default": ImageConfig(
-            type=instance_type,
-            lxc_unprivileged=kwargs.get("lxc_unprivileged", True),
-        )
-    }
-    return Config(pve=pve, cluster=cluster, flavors=flavors, images=images)
+    return Config(pve=pve, cluster=cluster, flavors=flavors)
 
 
 def _make_client(
@@ -206,7 +202,7 @@ def test_get_instance_lxc_not_found() -> None:
 def test_create_instance_lxc_clones_lxc_template() -> None:
     client, mock_prox = _make_client()
     mock_prox.cluster.resources.get.return_value = [
-        {"vmid": 9100, "node": "pve1", "type": "lxc", "name": "default"}
+        {"vmid": 9100, "node": "pve1", "type": "lxc", "name": "default", "template": 1}
     ]
 
     mock_prox.cluster.nextid.get.return_value = 201
@@ -226,6 +222,7 @@ def test_create_instance_lxc_clones_lxc_template() -> None:
         name="runner-lxc-1",
         controller_id="ctrl-1",
         pool_id="pool-1",
+        provider_type="lxc",
         image="default",
     )
 
@@ -251,7 +248,7 @@ def test_create_instance_lxc_clones_lxc_template() -> None:
 def test_create_instance_lxc_privileged_container() -> None:
     client, mock_prox = _make_client(lxc_unprivileged=False)
     mock_prox.cluster.resources.get.return_value = [
-        {"vmid": 9100, "node": "pve1", "type": "lxc", "name": "default"}
+        {"vmid": 9100, "node": "pve1", "type": "lxc", "name": "default", "template": 1}
     ]
 
     mock_prox.cluster.nextid.get.return_value = 203
@@ -271,6 +268,8 @@ def test_create_instance_lxc_privileged_container() -> None:
         name="runner-priv",
         controller_id="ctrl-1",
         pool_id="pool-1",
+        provider_type="lxc",
+        lxc_unprivileged=False,
         image="default",
     )
 

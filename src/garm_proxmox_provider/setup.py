@@ -33,10 +33,6 @@ def lint_config(config_path: str) -> None:
                 click.echo(
                     f"  - {flavor_name}: {flavor.cores} cores, {flavor.memory_mb} MB RAM"
                 )
-        if cfg.images:
-            click.echo("Images:")
-            for image_name, image in cfg.images.items():
-                click.echo(f"  - {image_name}: Type {image.type.upper()}")
 
     except ConfigError as exc:
         click.echo(f"FAIL: Configuration error: {exc}", err=True)
