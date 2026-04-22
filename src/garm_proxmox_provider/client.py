@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import re
+import threading
 import time
 import urllib.parse
 from typing import TYPE_CHECKING, Any, Callable
@@ -617,20 +618,32 @@ class PVEClient:
 
         try:
             if os_type.lower() == "windows":
-                res = (
-                    self._prox.nodes(node)
-                    .qemu(vmid)
-                    .agent.exec.post(
-                        command=[
-                            "powershell.exe",
-                            "-NonInteractive",
-                            "-ExecutionPolicy",
-                            "Bypass",
-                            "-Command",
-                            userdata,
-                        ]
-                    )
-                )
+                # Use PowerShell's -EncodedCommand to reliably pass multi-line scripts
+                # and avoid quoting/escaping issues over QGA. -EncodedCommand expects
+                # a base64-encoded UTF-16LE string.
+                try:
+                    encoded_cmd = base64.b64encode(
+                        userdata.encode("utf-16-le")
+                    ).decode()
+                    cmd = [
+                        "powershell.exe",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-EncodedCommand",
+                        encoded_cmd,
+                    ]
+                except Exception:
+                    # Fallback to -Command if encoding unexpectedly fails.
+                    cmd = [
+                        "powershell.exe",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        userdata,
+                    ]
+                res = self._prox.nodes(node).qemu(vmid).agent.exec.post(command=cmd)
             else:
                 res = (
                     self._prox.nodes(node)
@@ -657,14 +670,116 @@ class PVEClient:
                 # parts of the system observe instance health later.
                 return
 
-            # Do NOT poll exec-status here. Polling creates high-frequency API calls
+            # Do NOT poll exec-status synchronously here. Polling creates high-frequency API calls
             # and can result in long delays if the QGA responds with transient errors.
-            # Log the fact that the guest exec was launched and return immediately.
+            # Instead, start a background watcher thread that will attempt a few
+            # post-facto checks and then return immediately so create() is not blocked.
             logger.info(
-                "QGA exec launched in VM %d with pid=%r; not waiting for completion",
+                "QGA exec launched in VM %d with pid=%r; starting background watcher",
                 vmid,
                 pid,
             )
+
+            def _background_watch(node_arg: str, vmid_arg: int, pid_arg: int) -> None:
+                try:
+                    # Give the guest some time to start the process and produce status.
+                    time.sleep(30)
+                    # Poll a small number of times with backoff to avoid spamming PVE API.
+                    poll_intervals = [1, 2, 4]
+                    for interval in poll_intervals:
+                        try:
+                            status_resp = (
+                                self._prox.nodes(node_arg)
+                                .qemu(vmid_arg)
+                                .agent.get("exec-status", pid=pid_arg)
+                            )
+                        except Exception as exc:
+                            logger.debug(
+                                "Background watcher: error querying exec-status for VM %d pid=%r: %s",
+                                vmid_arg,
+                                pid_arg,
+                                exc,
+                            )
+                            time.sleep(interval)
+                            continue
+
+                        if isinstance(status_resp, dict):
+                            info = status_resp.get("result", status_resp) or {}
+                        else:
+                            info = status_resp or {}
+                            if not isinstance(info, dict):
+                                info = {}
+
+                        exited = bool(info.get("exited", False))
+                        exitcode = None
+                        if "exitcode" in info and info.get("exitcode") is not None:
+                            exitcode = info.get("exitcode")
+                        else:
+                            exitcode = info.get("exit-code") or info.get("exit_code")
+
+                        if exited or exitcode is not None:
+                            out_b64 = (
+                                info.get("out-data")
+                                or info.get("out_data")
+                                or info.get("out")
+                            )
+                            err_b64 = (
+                                info.get("err-data")
+                                or info.get("err_data")
+                                or info.get("err")
+                            )
+                            out = ""
+                            err = ""
+                            try:
+                                if out_b64:
+                                    out = base64.b64decode(out_b64).decode(
+                                        errors="replace"
+                                    )
+                                if err_b64:
+                                    err = base64.b64decode(err_b64).decode(
+                                        errors="replace"
+                                    )
+                            except Exception:
+                                out = str(out_b64)
+                                err = str(err_b64)
+
+                            logger.info(
+                                "Background QGA exec for VM %d finished: exitcode=%r stdout=%r stderr=%r",
+                                vmid_arg,
+                                exitcode,
+                                out[:1000],
+                                err[:1000],
+                            )
+
+                            if exitcode and int(exitcode) != 0:
+                                logger.warning(
+                                    "Background: userdata exited non-zero (%s) for VM %d",
+                                    exitcode,
+                                    vmid_arg,
+                                )
+                            return
+
+                        time.sleep(interval)
+                    # If we reach here, exec-status was not available or did not report completion.
+                    logger.debug(
+                        "Background watcher for VM %d pid=%r did not observe completion after retries",
+                        vmid_arg,
+                        pid_arg,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Background watcher for VM %d failed: %s", vmid_arg, exc
+                    )
+
+            try:
+                watcher = threading.Thread(
+                    target=_background_watch, args=(node, vmid, pid), daemon=True
+                )
+                watcher.start()
+            except Exception as exc:
+                logger.debug(
+                    "Failed to start background watcher thread for VM %d: %s", vmid, exc
+                )
             return
 
         except Exception as exc:
