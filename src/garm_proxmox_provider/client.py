@@ -130,7 +130,7 @@ class PVEClient:
         vmid_int = None
         try:
             vmid_int = int(vmid)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
 
         try:
@@ -706,12 +706,27 @@ class PVEClient:
 
                         if exitcode and int(exitcode) != 0:
                             logger.warning(
-                                "userdata exited non-zero (%s) for VM %d", exitcode, vmid
+                                "userdata exited non-zero (%s) for VM %d",
+                                exitcode,
+                                vmid,
                             )
 
                         finished = True
                         break
                 except Exception as exc:
+                    msg = str(exc)
+                    # Treat specific QGA "PID ... does not exist" errors as finished:
+                    # The QEMU guest agent sometimes responds with an error like:
+                    #   "Agent error: PID ld does not exist"
+                    # which indicates the guest-side process is gone and exec-status cannot be retrieved.
+                    # In that case assume the process has exited and stop polling to avoid hanging.
+                    if "PID" in msg and "does not exist" in msg:
+                        logger.info(
+                            "QGA reports missing PID for VM %d; assuming guest-side process exited",
+                            vmid,
+                        )
+                        finished = True
+                        break
                     logger.debug("Error polling exec-status for VM %d: %s", vmid, exc)
                 time.sleep(poll_interval)
 
