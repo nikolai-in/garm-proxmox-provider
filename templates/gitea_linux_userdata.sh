@@ -1,0 +1,202 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+{{- if .EnableBootDebug }}
+set -x
+{{- end }}
+
+CALLBACK_URL="{{ .CallbackURL }}"
+METADATA_URL="{{ .MetadataURL }}"
+BEARER_TOKEN="{{ .CallbackToken }}"
+
+RUN_HOME="/home/{{.RunnerUsername}}/act-runner"
+
+if [ -z "$METADATA_URL" ];then
+	echo "no token is available and METADATA_URL is not set"
+	exit 1
+fi
+
+function call() {
+	PAYLOAD="$1"
+	[[ $CALLBACK_URL =~ ^(.*)/status(/)?$ ]] || CALLBACK_URL="${CALLBACK_URL}/status"
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s -X POST -d "${PAYLOAD}" -H 'Accept: application/json' -H "Authorization: Bearer ${BEARER_TOKEN}" "${CALLBACK_URL}" || echo "failed to call home: exit code ($?)"
+}
+
+function systemInfo() {
+	if [ -f "/etc/os-release" ];then
+		. /etc/os-release
+	fi
+	OS_NAME=${NAME:-""}
+	OS_VERSION=${VERSION_ID:-""}
+	AGENT_ID=${1:-null}
+	# strip status from the callback url
+	[[ $CALLBACK_URL =~ ^(.*)/status(/)?$ ]] && CALLBACK_URL="${BASH_REMATCH[1]}" || true
+	SYSINFO_URL="${CALLBACK_URL}/system-info/"
+	PAYLOAD="{\"os_name\": \"$OS_NAME\", \"os_version\": \"$OS_VERSION\", \"agent_id\": $AGENT_ID}"
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s -X POST -d "${PAYLOAD}" -H 'Accept: application/json' -H "Authorization: Bearer ${BEARER_TOKEN}" "${SYSINFO_URL}" || true
+}
+
+function sendStatus() {
+	MSG="$1"
+	call "{\"status\": \"installing\", \"message\": \"$MSG\"}"
+}
+
+function success() {
+	MSG="$1"
+	ID=${2:-null}
+	call "{\"status\": \"idle\", \"message\": \"$MSG\", \"agent_id\": $ID}"
+}
+
+function fail() {
+	MSG="$1"
+	call "{\"status\": \"failed\", \"message\": \"$MSG\"}"
+	exit 1
+}
+
+{{- if .AgentMode }}
+AGENT_MODE="true"
+{{- else }}
+AGENT_MODE=""
+{{- end }}
+
+if [ "$AGENT_MODE" == "true" ]; then
+    sendStatus "Agent mode is enabled; setting up agent"
+    DOWNLOAD_URL="{{ .AgentDownloadURL }}"
+    AGENT_URL="{{ .AgentURL }}"
+    AGENT_TOKEN="{{ .AgentToken }}"
+    AGENT_SHELL={{ .AgentShell }}
+    sendStatus "Downloading agent from $DOWNLOAD_URL"
+    sudo curl --retry 5 \
+        --retry-delay 5 \
+        --retry-connrefused \
+        --fail -L \
+        -H "Authorization: Bearer ${BEARER_TOKEN}" \
+        -o /usr/local/bin/garm-agent "$DOWNLOAD_URL" || fail "failed to download garm-agent"
+    sudo chmod +x /usr/local/bin/garm-agent || fail "failed to make garm-agent executable"
+    sudo mkdir -p /var/log/garm-agent || fail "failed to create /var/log/garm-agent"
+    sudo chown {{ .RunnerUsername }}:{{ .RunnerUsername }} /var/log/garm-agent || fail "failed to chown /var/log/garm-agent"
+    sudo mkdir -p /etc/garm-agent || fail "failed to create /etc/garm"
+    sudo chown {{ .RunnerUsername }}:{{ .RunnerUsername }} /etc/garm-agent || fail "failed to change owner on /etc/garm-agent"
+
+    sendStatus "Creating config and systemd unit"
+    cat > /etc/garm-agent/garm-agent.toml << EOF
+server_url = "$AGENT_URL"
+log_file = "/var/log/garm-agent/garm-agent.log"
+work_dir = "$RUN_HOME"
+enable_shell = $AGENT_SHELL
+token = "$AGENT_TOKEN"
+runner_cmdline = ["$RUN_HOME/act_runner", "daemon", "--once"]
+state_db_path = "/etc/garm-agent/agent-state.db"
+EOF
+
+    cat > /tmp/garm-agent.service << EOF
+[Unit]
+Description=GARM agent
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/garm-agent daemon --config /etc/garm-agent/garm-agent.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5s
+User={{ .RunnerUsername }}
+Environment=TERM=xterm-256color
+Environment=LANG=en_US.UTF-8
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo mv /tmp/garm-agent.service /etc/systemd/system/garm-agent.service || fail "failed to create /etc/systemd/system/garm-agent.service"
+    sudo chown root:root /etc/systemd/system/garm-agent.service || fail "failed to change owner on /etc/systemd/system/garm-agent.service"
+    sendStatus "Reloading systemd unit"
+    sudo systemctl daemon-reload || fail "failed to reload systemd"
+fi
+
+function downloadAndExtractRunner() {
+	sendStatus "downloading tools from {{ .DownloadURL }}"
+    mkdir -p "$RUN_HOME" || fail "failed to create actions-runner folder"
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -L -o "$RUN_HOME/act_runner" "{{ .DownloadURL }}" || fail "failed to download tools"
+	chown {{ .RunnerUsername }}:{{ .RunnerGroup }} -R "$RUN_HOME"/ || fail "failed to change owner"
+	chmod +x "$RUN_HOME/act_runner" || fail "failed to set executable flag"
+}
+
+if [ ! -d "$RUN_HOME" ];then
+	downloadAndExtractRunner
+else
+	sendStatus "using cached runner found in $RUN_HOME"
+fi
+
+cd "$RUN_HOME"
+
+sendStatus "configuring runner"
+function getRunnerFile() {
+	curl --retry 5 --retry-delay 5 \
+		--retry-connrefused --fail -s \
+		-X GET -H 'Accept: application/json' \
+		-H "Authorization: Bearer ${BEARER_TOKEN}" \
+		"${METADATA_URL}/$1" -o "$2"
+}
+
+GITHUB_TOKEN=$(curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s -X GET -H 'Accept: application/json' -H "Authorization: Bearer ${BEARER_TOKEN}" "${METADATA_URL}/runner-registration-token/")
+
+set +e
+attempt=1
+while true; do
+	ERROUT=$(mktemp)
+	./act_runner register --ephemeral --no-interactive --instance "{{ .RepoURL }}" --token "$GITHUB_TOKEN" --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}" 2>$ERROUT
+	if [ $? -eq 0 ]; then
+		rm $ERROUT || true
+		sendStatus "runner successfully configured after $attempt attempt(s)"
+		break
+	fi
+	LAST_ERR=$(cat $ERROUT)
+	echo "$LAST_ERR"
+
+	if [ $attempt -gt 5 ];then
+		rm $ERROUT || true
+		fail "failed to configure runner: $LAST_ERR"
+	fi
+
+	sendStatus "failed to configure runner (attempt $attempt): $LAST_ERR (retrying in 5 seconds)"
+	attempt=$((attempt+1))
+	rm $ERROUT || true
+	sleep 5
+done
+set -e
+
+getRunnerFile "system/service-name" ""$RUN_HOME"/.service" || fail "failed to get service name file"
+sed -i 's/$/\.service/' "$RUN_HOME"/.service
+SVC_NAME=$(cat "$RUN_HOME"/.service)
+
+AGENT_ID=""
+sendStatus "starting service"
+if [ "$AGENT_MODE" == "true" ]; then
+    sendStatus "Enabling garm-agent service"
+    sudo systemctl enable --now garm-agent
+else
+	sendStatus "generating systemd unit file"
+	getRunnerFile "systemd/unit-file?runAsUser={{ .RunnerUsername }}" "$SVC_NAME" || fail "failed to get service file"
+	sudo mv $SVC_NAME /etc/systemd/system/ || fail "failed to move service file"
+	sudo chown root:root /etc/systemd/system/$SVC_NAME || fail "failed to change owner"
+	if [ -e "/sys/fs/selinux" ];then
+		sudo chcon -h system_u:object_r:systemd_unit_file_t:s0 /etc/systemd/system/$SVC_NAME || fail "failed to change selinux context"
+		sudo chcon -R -h user_u:object_r:bin_t:s0 /home/runner/ || fail "failed to change selinux context"
+	fi
+
+	sudo systemctl daemon-reload || fail "failed to reload systemd"
+	sudo systemctl enable --now $SVC_NAME
+fi
+
+set +e
+AGENT_ID=$(grep '"id"' "$RUN_HOME"/.runner |  tr -d -c 0-9)
+if [ $? -ne 0 ];then
+	fail "failed to get agent ID"
+fi
+set -e
+
+systemInfo $AGENT_ID
+success "runner successfully installed" $AGENT_ID
