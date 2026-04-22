@@ -4,6 +4,15 @@ Param(
 	[string]$Token="{{.CallbackToken}}"
 )
 
+# Helper to get Gitea instance root URL (strip /api/v1 if present)
+function Get-GiteaInstanceUrl {
+    $repoUrl = "{{ .RepoURL }}"
+    if ($repoUrl.EndsWith("/api/v1")) {
+        return $repoUrl.Substring(0, $repoUrl.Length - 7)
+    }
+    return $repoUrl
+}
+
 $ErrorActionPreference="Stop"
 
 function Start-ExecuteWithRetry {
@@ -555,7 +564,11 @@ function Install-Runner() {
 		$GithubRegistrationToken = Start-ExecuteWithRetry -ScriptBlock {
 			Invoke-WebRequest -UseBasicParsing -Headers @{"Accept"="application/json"; "Authorization"="Bearer $Token"} -Uri $MetadataURL/runner-registration-token/
 		} -MaxRetryCount 5 -RetryInterval 5 -RetryMessage "Retrying download of GitHub registration token..."
-        & $runnerExecutable register --ephemeral --no-interactive --instance "{{ .RepoURL }}" --token $GithubRegistrationToken --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}"
+
+        # Use Gitea instance root URL for --instance
+        $GiteaInstanceUrl = Get-GiteaInstanceUrl
+
+        & $runnerExecutable register --ephemeral --no-interactive --instance $GiteaInstanceUrl --token $GithubRegistrationToken --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}"
 		if ($LASTEXITCODE) {
 			Throw "Failed to configure runner. Err code $LASTEXITCODE"
 		}

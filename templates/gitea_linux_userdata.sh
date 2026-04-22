@@ -12,6 +12,7 @@ METADATA_URL="{{ .MetadataURL }}"
 BEARER_TOKEN="{{ .CallbackToken }}"
 
 RUN_HOME="/home/{{.RunnerUsername}}/act-runner"
+GITEA_URL=$(echo "{{ .RepoURL }}" | sed 's#/api/v1##')
 
 if [ -z "$METADATA_URL" ];then
 	echo "no token is available and METADATA_URL is not set"
@@ -147,8 +148,10 @@ set +e
 attempt=1
 while true; do
 	ERROUT=$(mktemp)
-	./act_runner register --ephemeral --no-interactive --instance "{{ .RepoURL }}" --token "$GITHUB_TOKEN" --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}" 2>$ERROUT
+	sudo -u {{ .RunnerUsername }} ./act_runner register --ephemeral --no-interactive --instance "$GITEA_URL" --token "$GITHUB_TOKEN" --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}" 2>$ERROUT
 	if [ $? -eq 0 ]; then
+		# Ensure correct ownership (optional but safe)
+		sudo chown {{ .RunnerUsername }}:{{ .RunnerGroup }} "$RUN_HOME/.runner" "$RUN_HOME/.service" 2>/dev/null || true
 		rm $ERROUT || true
 		sendStatus "runner successfully configured after $attempt attempt(s)"
 		break
