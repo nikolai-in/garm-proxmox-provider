@@ -2,52 +2,64 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: ["**"]
   pull_request:
     branches: [master]
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   test:
     name: Python tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: "Set up Python"
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.14"
+          python-version-file: "pyproject.toml"
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
 
-      - name: Install dependencies
-        run: uv sync --frozen --no-dev
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
 
       - name: Run tests
         run: uv run pytest
 
   docker-build:
-    name: Docker build
+    name: Docker build and push nightly
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
-      - name: Build image (no push)
-        uses: docker/build-push-action@v6
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push nightly image
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
-          push: false
-          tags: ghcr.io/nikolai-in/garm-proxmox-combined:ci
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/garm-proxmox-combined:nightly
+            ghcr.io/${{ github.repository_owner }}/garm-proxmox-combined:${{ github.sha }}
