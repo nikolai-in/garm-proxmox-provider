@@ -597,7 +597,15 @@ class PVEClient:
     def _run_userdata_qemu(
         self, node: str, vmid: int, userdata: str, os_type: str
     ) -> None:
-        """Wait for QGA and execute *userdata* inside the VM via qm guest exec."""
+        """Execute *userdata* inside the VM via QEMU Guest Agent without blocking.
+
+        Historically this function polled the QGA exec-status until completion,
+        which caused heavy API traffic and long create delays when the agent
+        returned transient errors or missing PIDs. To avoid spamming the PVE
+        API and blocking the provider, we now start the guest exec and return
+        immediately. The guest-side process continues inside the VM; any
+        post-creation checks (IPs, status) are performed elsewhere.
+        """
         logger.info("Executing userdata script via QEMU Guest Agent in VM %d", vmid)
 
         if not self._wait_for_qga(node, vmid):
@@ -645,98 +653,19 @@ class PVEClient:
                     "No pid returned from QGA exec for VM %d; unable to track status",
                     vmid,
                 )
+                # We don't block waiting for exec-status; just return and let other
+                # parts of the system observe instance health later.
                 return
 
-            # Poll exec-status until completion or timeout.
-            exec_timeout = 300
-            deadline = time.monotonic() + exec_timeout
-            poll_interval = 1.0
-            finished = False
-
-            while time.monotonic() < deadline:
-                try:
-                    status_resp = (
-                        self._prox.nodes(node)
-                        .qemu(vmid)
-                        .agent.get("exec-status", pid=pid)
-                    )
-                    if isinstance(status_resp, dict):
-                        info = status_resp.get("result", status_resp) or {}
-                    else:
-                        info = status_resp or {}
-                        if not isinstance(info, dict):
-                            info = {}
-
-                    exited = bool(info.get("exited", False))
-                    exitcode = None
-                    if "exitcode" in info and info.get("exitcode") is not None:
-                        exitcode = info.get("exitcode")
-                    else:
-                        exitcode = info.get("exit-code") or info.get("exit_code")
-
-                    if exited or exitcode is not None:
-                        out_b64 = (
-                            info.get("out-data")
-                            or info.get("out_data")
-                            or info.get("out")
-                        )
-                        err_b64 = (
-                            info.get("err-data")
-                            or info.get("err_data")
-                            or info.get("err")
-                        )
-                        out = ""
-                        err = ""
-                        try:
-                            if out_b64:
-                                out = base64.b64decode(out_b64).decode(errors="replace")
-                            if err_b64:
-                                err = base64.b64decode(err_b64).decode(errors="replace")
-                        except Exception:
-                            out = str(out_b64)
-                            err = str(err_b64)
-
-                        logger.info(
-                            "QGA exec for VM %d finished: exitcode=%r stdout=%r stderr=%r",
-                            vmid,
-                            exitcode,
-                            out[:1000],
-                            err[:1000],
-                        )
-
-                        if exitcode and int(exitcode) != 0:
-                            logger.warning(
-                                "userdata exited non-zero (%s) for VM %d",
-                                exitcode,
-                                vmid,
-                            )
-
-                        finished = True
-                        break
-                except Exception as exc:
-                    msg = str(exc)
-                    # Treat specific QGA "PID ... does not exist" errors as finished:
-                    # The QEMU guest agent sometimes responds with an error like:
-                    #   "Agent error: PID ld does not exist"
-                    # which indicates the guest-side process is gone and exec-status cannot be retrieved.
-                    # In that case assume the process has exited and stop polling to avoid hanging.
-                    if "PID" in msg and "does not exist" in msg:
-                        logger.info(
-                            "QGA reports missing PID for VM %d; assuming guest-side process exited",
-                            vmid,
-                        )
-                        finished = True
-                        break
-                    logger.debug("Error polling exec-status for VM %d: %s", vmid, exc)
-                time.sleep(poll_interval)
-
-            if not finished:
-                logger.warning(
-                    "QGA exec for VM %d did not complete within %ds; "
-                    "it may still be running inside the guest",
-                    vmid,
-                    exec_timeout,
-                )
+            # Do NOT poll exec-status here. Polling creates high-frequency API calls
+            # and can result in long delays if the QGA responds with transient errors.
+            # Log the fact that the guest exec was launched and return immediately.
+            logger.info(
+                "QGA exec launched in VM %d with pid=%r; not waiting for completion",
+                vmid,
+                pid,
+            )
+            return
 
         except Exception as exc:
             logger.warning(
