@@ -45,42 +45,12 @@ def _render_linux_userdata(
     provider_id: str,
     defaults: ClusterConfig,
 ) -> str:
-    """Render a bash script for Linux (works with cloud-init and LXC exec).
+    """Render a bash script for Linux.
 
-    The bootstrap body is sourced exclusively from GARM's
-    ``runner_install_template`` extra_spec (base64-encoded).  When that key is
-    absent the script still exports all required env vars so that a GARM image
-    can pick them up via its own mechanism.
+    Per policy, do not modify or inject into a customer-provided install template.
+    If a base64-encoded `runner_install_template` is provided in extra_specs,
+    decode and return it verbatim. If absent, return an empty string (no injection).
     """
-    labels = ",".join(bootstrap.labels) if bootstrap.labels else bootstrap.pool_id
-    forge_type = "gitea" if _is_gitea(bootstrap) else "github"
-
-    # SSH key: extra_specs override takes precedence over cluster config.
-    ssh_key = (bootstrap.extra_specs or {}).get("ssh_public_key") or defaults.ssh_public_key
-    ssh_setup = ""
-    if ssh_key:
-        key = ssh_key.strip()
-        ssh_setup = f"""\
-mkdir -p /home/runner/.ssh
-echo "{key}" >> /home/runner/.ssh/authorized_keys
-chown -R runner:runner /home/runner/.ssh
-chmod 700 /home/runner/.ssh
-chmod 600 /home/runner/.ssh/authorized_keys
-"""
-
-    env_block = f"""\
-export METADATA_URL="{bootstrap.metadata_url.rstrip("/")}"
-export CALLBACK_URL="{bootstrap.callback_url}"
-export BEARER_TOKEN="{bootstrap.instance_token}"
-export REPO_URL="{bootstrap.repo_url}"
-export RUNNER_NAME="{bootstrap.name}"
-export RUNNER_LABELS="{labels}"
-export FORGE_TYPE="{forge_type}"
-export PROVIDER_ID="{provider_id}"
-"""
-
-    # GARM-rendered install template from extra_specs (base64-encoded).
-    # This IS the full bootstrap body; when absent, only env vars are exported.
     body = ""
     installer_b64 = (bootstrap.extra_specs or {}).get("runner_install_template")
     if installer_b64:
@@ -92,12 +62,8 @@ export PROVIDER_ID="{provider_id}"
                 bootstrap.name,
                 exc,
             )
-
-    return f"""#!/bin/bash
-set -euo pipefail
-
-{ssh_setup}{env_block}
-{body}"""
+    # Return the decoded installer template verbatim, or empty string if none provided.
+    return body
 
 
 # ---------------------------------------------------------------------------
@@ -114,19 +80,6 @@ def _render_windows_userdata(
     The bootstrap body is sourced from GARM's ``runner_install_template``
     extra_spec (base64-encoded).  When absent, only env vars are set.
     """
-    labels = ",".join(bootstrap.labels) if bootstrap.labels else bootstrap.pool_id
-    forge_type = "gitea" if _is_gitea(bootstrap) else "github"
-
-    env_block = f"""\
-$env:METADATA_URL = "{bootstrap.metadata_url.rstrip("/")}"
-$env:CALLBACK_URL = "{bootstrap.callback_url}"
-$env:BEARER_TOKEN = "{bootstrap.instance_token}"
-$env:REPO_URL = "{bootstrap.repo_url}"
-$env:RUNNER_NAME = "{bootstrap.name}"
-$env:RUNNER_LABELS = "{labels}"
-$env:FORGE_TYPE = "{forge_type}"
-$env:PROVIDER_ID = "{provider_id}"
-"""
 
     body = ""
     installer_b64 = (bootstrap.extra_specs or {}).get("runner_install_template")
@@ -140,12 +93,7 @@ $env:PROVIDER_ID = "{provider_id}"
                 exc,
             )
 
-    return f"""\
-#ps1_sysnative
-$ErrorActionPreference = 'Stop'
-
-{env_block}
-{body}"""
+    return body
 
 
 # ---------------------------------------------------------------------------
