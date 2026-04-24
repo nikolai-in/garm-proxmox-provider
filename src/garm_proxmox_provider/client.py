@@ -274,9 +274,9 @@ class PVEClient:
             return self._lxc_get_ips(node, vmid)
         return self._get_ips(node, vmid)
 
-    def _next_vmid(self) -> int:
-        next_id = self._prox.cluster.nextid.get()
-        return int(next_id) if next_id is not None else 0
+    def _random_vmid(self) -> int:
+        """Pick a random VMID in the configured range."""
+        return self._config.vmid_range.pick()
 
     # ------------------------------------------------------------------
     # Public API
@@ -385,8 +385,18 @@ class PVEClient:
         _, res_tmpl, _ = found_tmpl
         real_tmpl_vmid = int(res_tmpl.get("vmid", 0))
 
-        for attempt in range(5):
-            vmid = self._next_vmid()
+        import random
+
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            vmid = self._random_vmid()
+            # Check if VMID exists before attempting to create
+            if self._find_instance(vmid) is not None:
+                logger.warning(
+                    "Randomly chosen VMID %d already exists, retrying...", vmid
+                )
+                time.sleep(random.uniform(0.2, 0.7))
+                continue
             try:
                 if provider_type == "lxc":
                     return self._create_lxc(
@@ -422,13 +432,19 @@ class PVEClient:
                     node=node,
                 )
             except Exception as exc:
-                if "File exists" in str(exc) and attempt < 4:
-                    logger.warning("VMID collision (likely %d), retrying...", vmid)
-                    time.sleep(1)
+                # Handle both file exists and lock errors
+                msg = str(exc).lower()
+                if (
+                    "file exists" in msg or "already exists" in msg or "lock" in msg
+                ) and attempt < max_attempts - 1:
+                    logger.warning(
+                        "VMID collision or lock error (VMID %d), retrying...", vmid
+                    )
+                    time.sleep(random.uniform(0.3, 1.0))
                     continue
                 raise
         raise RuntimeError(
-            "Failed to create instance after retries due to VMID collisions"
+            "Failed to create instance after retries due to VMID collisions or lock errors"
         )
 
     def _create_qemu(

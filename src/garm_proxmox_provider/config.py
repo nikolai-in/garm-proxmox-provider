@@ -46,7 +46,9 @@ class ClusterConfig:
     bridge: str = "vmbr0"
     snippets_storage: str | None = None
     ssh_public_key: str | None = None
-    lxc_unprivileged: bool = True  # default for LXC containers; overridable via extra_specs
+    lxc_unprivileged: bool = (
+        True  # default for LXC containers; overridable via extra_specs
+    )
 
 
 @dataclass
@@ -66,11 +68,26 @@ class LoggingConfig:
 
 
 @dataclass
+class VMIDRangeConfig:
+    """Configurable VMID range for randomized assignment."""
+
+    min: int = 1100
+    max: int = 1999
+
+    def pick(self) -> int:
+        """Pick a random VMID in the configured range."""
+        import random
+
+        return random.randint(self.min, self.max)
+
+
+@dataclass
 class Config:
     pve: PVEConfig
     cluster: ClusterConfig
     flavors: dict[str, FlavorConfig] = field(default_factory=dict)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    vmid_range: VMIDRangeConfig = field(default_factory=VMIDRangeConfig)
 
     def get_flavor(self, name: str) -> FlavorConfig:
         """Return the requested flavor, fallback to 'default', or a baseline flavor."""
@@ -149,11 +166,19 @@ def load_config(path: str) -> Config:
         debug_dump=bool(logging_data.get("debug_dump", False)),
     )
 
+    # --- VMID Range section (optional) ------------------------------------
+    vmid_range_data = data.get("vmid_range", {}) or {}
+    vmid_range_cfg = VMIDRangeConfig(
+        min=int(vmid_range_data.get("min", 1100)),
+        max=int(vmid_range_data.get("max", 1999)),
+    )
+
     return Config(
         pve=pve,
         cluster=cluster,
         flavors=flavors,
         logging=logging_cfg,
+        vmid_range=vmid_range_cfg,
     )
 
 
