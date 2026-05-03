@@ -160,119 +160,56 @@ LXC template validation (pre-provider)
 
 LXC-specific notes for GARM provider
 
-- LXC exec injection is different per template and sometimes requires privileged capabilities; test thoroughly.
-- Network namespaces and capabilities might differ from QEMU, so ensure the bootstrap flow still completes.
+# Provider setup
 
----
+This is the shortest path to a working Proxmox setup for `garm-proxmox-provider`.
 
-## Testing templates with the provider (smoke tests)
+## 1. Create a Proxmox service user
 
-Once you have prepared templates and a service token, perform these quick smoke tests.
+Create a dedicated user and API token, then give it permission to manage the target node, storage, and pool. Use a token instead of a password if you can.
 
-1) Basic connectivity
+Recommended config values:
 
-- Verify the provider can connect to your Proxmox host using the configured token:
+```toml
+[pve]
+host = "https://pve.example.com:8006"
+user = "garm@pve"
+token_name = "garm"
+token_value = "REPLACE_ME"
+verify_ssl = true
 
-```garm-proxmox-provider/docs/setup.md#L41-48
-garm-proxmox-provider test-connection --config /path/to/garm-provider-proxmox.toml
-# or, if you use uv (dev env):
-uv run garm-proxmox-provider test-connection --config /path/to/garm-provider-proxmox.toml
+[cluster]
+node = "pve-node1"
+storage = "local-lvm"
+pool = "garm"
+bridge = "vmbr0"
 ```
 
-Expected: prints Proxmox VE version or otherwise indicates a successful connection.
+## 2. Prepare a template
 
-1) List available templates (sanity)
+- For QEMU VMs, install cloud-init and the QEMU Guest Agent.
+- For LXC containers, make sure the base image has the tools your bootstrap script needs, such as `bash`, `curl`, and `tar`.
+- Mark the Proxmox image as a template.
+- Make sure the template name matches the bootstrap `image` field.
 
-- Ensure the template you prepared appears in the template listing the provider uses:
+## 3. Test the provider
 
-```garm-proxmox-provider/docs/setup.md#L49-56
-garm-proxmox-provider list-templates --config /path/to/garm-provider-proxmox.toml
+Use a small bootstrap JSON payload and create one instance.
+
+```bash
+cat bootstrap.json | garm-proxmox-provider --config /path/to/garm-provider-proxmox.toml create-instance
 ```
 
-Expected: your QEMU/LXC template should be listed (templates are cluster resources with `template=1`).
+After it starts, use:
 
-1) Manual create-from-template test (recommended before full automation)
-
-- Clone the template manually via the Proxmox UI or API and power it on; confirm cloud-init runs (QEMU) or exec-injection works (LXC).
-- Confirm the guest has expected network access and login keys.
-
-1) Provider create-instance smoke test (full flow)
-
-- The provider expects the GARM bootstrap payload JSON on stdin for the `CreateInstance` legacy flow or can be driven via its subcommand. Use a minimal known-good bootstrap JSON (your bootstrap/runner system may require certain fields).
-- Example invocation (conceptual):
-
-```garm-proxmox-provider/docs/setup.md#L57-64
-cat bootstrap.json | garm-proxmox-provider create-instance --config /path/to/garm-provider-proxmox.toml
-# or legacy dispatch:
-cat bootstrap.json | GARM_COMMAND=CreateInstance garm-proxmox-provider --config /path/to/garm-provider-proxmox.toml
+```bash
+garm-proxmox-provider --config /path/to/garm-provider-proxmox.toml get-instance --instance-id <id>
 ```
 
-Expected: The provider clones/creates the instance, runs the bootstrap, and returns Instance JSON to stdout. Inspect logs (stdout/stderr) and the guest console if bootstrap fails.
+## 4. If something fails
 
-1) Verify bootstrap inside guest
-
-- QEMU: check `/var/log/cloud-init.log`, confirm `qemu-guest-agent` is active, and that the expected artifacts (files, services) created by the bootstrap exist.
+- Check that the config file path is correct.
+- Check that the template name matches the bootstrap `image` value.
+- Check that the token has permission to use the target node and storage.
+- Check the provider logs via your configured log file or stderr.
 - LXC: check the injected bootstrap script output (where your script logs) and confirm runner installed and/or services enabled.
-
----
-
-## Tabbed quick-reference: QEMU vs LXC template prep
-
-```{tab} QEMU template (preferred)
-- Install `cloud-init` in the guest OS.
-- Install and enable `qemu-guest-agent` (systemd: `qemu-guest-agent.service`).
-- Clean cloud-init state and SSH host keys before templating (so each clone initialises cleanly).
-- Ensure the template is convertible to a Proxmox template and stored on the expected node/storage.
-- Test: clone the template, start the VM, check cloud-init logs and qga status in the guest.
-```
-
-### LXC template
-
-- Use a minimal container template appropriate for your workloads (Debian, Alpine, CentOS, etc.).
-- Ensure required runtime tools are present in the template (shell, `tar`, `curl`/`wget`, etc.) so the bootstrap script can run.
-- Clean persistent state before templating (remove SSH host keys, caches, and other machine-specific artifacts).
-- Test the template by creating a test container and running an injected command (for example via `pct exec`) to verify exec-based bootstrap works as expected.
-
----
-
-## Troubleshooting common failures
-
-- "Template not found" in provider logs:
-  - Confirm the template VMID/resource exists and is marked as a template on the node the provider expects.
-  - Confirm the provider's `defaults.node` and `defaults.storage` are correct for where the template resides.
-
-- Cloud-init does not run on clones:
-  - Ensure `cloud-init` is installed and the template has been cleaned (`cloud-init clean --logs` or distro-specific).
-  - Confirm the cloud-init datasource is compatible (NoCloud vs ConfigDrive) and Proxmox will provide metadata correctly.
-
-- QEMU Guest Agent commands fail:
-  - Confirm `qemu-guest-agent` is installed and running inside the guest.
-  - Confirm the Proxmox template/VM has the QGA channel enabled (`agent` option in the VM config).
-  - If QGA is flaky in your environment, test or consider `qm_ssh_fallback` options after evaluating security implications.
-
-- Bootstrap succeeds but runner not connecting:
-  - Inspect the runner service logs inside the guest.
-  - Confirm network access to the GitHub/Gitea runner registration endpoint and that tokens/labels are correct.
-  - Ensure the cloud-init user-data included service creation enabling the runner at boot.
-
----
-
-## Operational recommendations
-
-- Automated testing: keep a small "canary" pool and a lightweight smoke-test harness that:
-  - Clones a template, boots it, validates runner registration or basic connectivity, then destroys the instance.
-- Template lifecycle: periodically rebuild templates with updated OS packages and runner binary versions.
-- Secrets: do not commit token values; use a secrets manager or environment-based retrieval in production.
-- Permissions: minimize token scope and use separate tokens for CI and production controllers where appropriate.
-- Monitoring: configure logs and alerts for repeated provisioning failures (e.g., many bootstrap failures in a short window).
-
----
-
-If you want, next steps I can do for you:
-
-- Provide concrete role capability lists and sample API/CLI commands for token creation and permission assignment (I can include exact commands for the Proxmox CLI/API once you confirm the Proxmox edition and preferred method — Web UI, `pveum`/`pvesh`, or direct API).
-- Produce a small, tested cloud-init userdata template that includes the GARM runner bootstrap script for your chosen OS family (Ubuntu, Debian, Fedora, etc.).
-- Add a minimal smoke-test script you can run in CI that:
-  - Uses the prepared token to create a temporary instance, verifies it bootstraps, then destroys it.
-
-If you'd like any of those, tell me which OS images you plan to use for templates (e.g., Ubuntu 22.04 cloud image, Debian 12, CentOS Stream, or an LXC variant) and whether you prefer Web UI or CLI/API examples for user/token/role creation.

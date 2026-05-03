@@ -2,121 +2,83 @@
 :caption: Contents:
 :maxdepth: 2
 
-architecture.md
 setup.md
-testing_templates.md
-api.md
 configuration.md
 cli.md
+logging.md
 ```
 
 # garm-proxmox-provider
 
 ## Overview
 
-`garm-proxmox-provider` is an external GARM provider that provisions ephemeral runners on Proxmox VE. It supports creating runners as either:
+`garm-proxmox-provider` is an external GARM provider for Proxmox VE. It supports creating runners as either:
 
-- QEMU virtual machines (cloud-init + QEMU Guest Agent)
-- LXC containers (exec-injection)
+- QEMU virtual machines
+- LXC containers
 
-This index focuses on the practical steps to prepare the Proxmox environment, validate templates, and run quick smoke tests.
+If you just want to get started, read [setup.md](setup.md) and [configuration.md](configuration.md), then use [cli.md](cli.md) for commands.
 
 ---
 
 ## Quick checklist
 
-- [ ] Ensure a Proxmox API token (or user+password) with sufficient privileges is available.
-- [ ] Confirm the template image exists and is marked as `template` on the correct node/storage.
-- [ ] Verify cloud-init and/or QEMU Guest Agent are installed in QEMU templates.
-- [ ] Verify LXC templates include required runtime tools (bash, curl, tar).
-- [ ] Prepare a minimal GARM bootstrap JSON payload for test provisioning.
+- [ ] Create a Proxmox API token with permission to manage the target node and storage.
+- [ ] Prepare a Proxmox template or container image and mark it as a template.
+- [ ] Put the provider config in TOML and set `GARM_PROVIDER_CONFIG_FILE` or `--config`.
+- [ ] Make sure the bootstrap `image` value matches the Proxmox template name.
 
 ---
 
-## Minimal provider config (TOML)
+## Minimal provider config
 
-Place a TOML config file and reference it with `--config <path>` or via the `GARM_PROVIDER_CONFIG_FILE` environment variable.
+Use the example below as a starting point.
 
 ```toml
 [pve]
-host = "https://pve.example.local:8006"
+host = "https://pve.example.com:8006"
 user = "garm@pve"
 token_name = "garm"
-token_value = "REPLACE_WITH_TOKEN"
+token_value = "REPLACE_ME"
 verify_ssl = true
 
-[defaults]
-node = "pve-node-1"
+[cluster]
+node = "pve-node1"
 storage = "local-lvm"
 pool = "garm"
-template_vmid = 9000     # optional: set to clone from existing template
-cores = 2
-memory_mb = 2048
-disk_gb = 10
 bridge = "vmbr0"
-ssh_public_key = ""      # optional: cloud-init key
+
+[flavors.default]
+cores = 2
+memory_mb = 4096
 ```
 
 ---
 
-## Validate connectivity and discover templates
+## Run It
 
-- Test API connectivity:
-
-```bash
-garm-proxmox-provider --config ./garm-provider-proxmox.toml test-connection
-# or, if using a uv-managed environment:
-uv run garm-proxmox-provider --config ./garm-provider-proxmox.toml test-connection
-```
-
-- List templates reported by the cluster:
+Direct subcommand usage is recommended:
 
 ```bash
-garm-proxmox-provider --config ./garm-provider-proxmox.toml list-templates
+garm-proxmox-provider --config ./garm-provider-proxmox.toml --help
 ```
 
-Expected output: a table containing `VMID`, `TYPE`, `NAME`, and `NODE`. Verify the template VMID you intend to clone is present and reachable on the node you plan to use.
+Legacy GARM dispatch is also supported:
+
+```bash
+GARM_COMMAND=ListInstances GARM_PROVIDER_CONFIG_FILE=./garm-provider-proxmox.toml \
+  garm-proxmox-provider
+```
+
+For `CreateInstance`, GARM pipes bootstrap JSON to stdin and the provider returns instance JSON on stdout.
 
 ---
 
-## How to test a QEMU template (cloning flow)
+## What to read next
 
-1. Confirm the template VMID exists and is a valid cloud-init template (if you intend to use cloud-init).
-2. Prepare a minimal GARM bootstrap JSON (this is what the provider expects on stdin for `create-instance`).
-
-Example minimal bootstrap payload (replace placeholders as needed):
-
-```json
-{
-  "labels": {
-    "runner-controller-id": "ctl-123",
-    "runner-pool-id": "pool-1"
-  },
-  "os_type": "linux",
-  "runner_name": "test-runner-01",
-  "bootstrap_url": "https://example.com/bootstrap.sh",
-  "bootstrap_token": "TOKEN"
-}
-```
-
-Invoke the provider to create an instance (direct subcommand style):
-
-```bash
-cat bootstrap.json | garm-proxmox-provider --config ./garm-provider-proxmox.toml create-instance
-```
-
-Or using legacy GARM dispatch:
-
-```bash
-export GARM_COMMAND=CreateInstance
-cat bootstrap.json | garm-proxmox-provider --config ./garm-provider-proxmox.toml
-```
-
-After issuing the create, confirm:
-
-- The VM was cloned/created on the expected node/storage.
-- The VM started.
-- The provider returned Instance JSON containing `provider_id` (VMID).
+- [setup.md](setup.md) for the shortest Proxmox preparation checklist.
+- [configuration.md](configuration.md) for the exact TOML schema.
+- [cli.md](cli.md) for command usage and `GARM_COMMAND` mapping.
 
 ---
 
